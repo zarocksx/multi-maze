@@ -43,6 +43,13 @@ function connect(url) {
   });
 }
 
+test("le labyrinthe par défaut mesure 38 par 26 cellules", () => {
+  const maze = generateMaze();
+  assert.equal(maze.width, 38);
+  assert.equal(maze.height, 26);
+  assert.equal(maze.cells.length, 38 * 26);
+});
+
 test("le générateur produit des murs cohérents et un labyrinthe entièrement accessible", () => {
   const maze = generateMaze(19, 13);
   const visited = new Set(["0,0"]);
@@ -248,6 +255,14 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   const created = await firstRoom;
   assert.match(created.room, /^[A-Z2-9]{4}$/);
   assert.equal(created.players.length, 1);
+  assert.equal(created.phase, "waiting");
+  assert.equal(created.ghost.isDemo, true);
+  assert.deepEqual(created.ghost.path[0], { x: 0, y: 0, t: 0 });
+  assert.deepEqual(created.ghost.path.at(-1), {
+    x: created.maze.exit.x,
+    y: created.maze.exit.y,
+    t: created.ghost.timeMs,
+  });
 
   const firstUpdate = waitForMessage(first, "room");
   const secondRoom = waitForMessage(second, "room");

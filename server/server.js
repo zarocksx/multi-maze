@@ -22,6 +22,8 @@ const POWER_UP_KINDS = ["speed", "shield", "slow_all", "confuse_all", "freeze_al
 const CHAT_MAX_LENGTH = 240;
 const CHAT_HISTORY_LIMIT = 50;
 const CHAT_COOLDOWN_MS = 350;
+const MAZE_WIDTH = 38;
+const MAZE_HEIGHT = 26;
 
 const DIRECTIONS = {
   up: { dx: 0, dy: -1, wall: WALL_TOP },
@@ -30,7 +32,7 @@ const DIRECTIONS = {
   left: { dx: -1, dy: 0, wall: WALL_LEFT },
 };
 
-function generateMaze(width = 19, height = 13, random = Math.random) {
+function generateMaze(width = MAZE_WIDTH, height = MAZE_HEIGHT, random = Math.random) {
   const cells = new Array(width * height).fill(15);
   const visited = new Array(width * height).fill(false);
   const stack = [{ x: 0, y: 0 }];
@@ -227,7 +229,7 @@ function canMove(maze, x, y, directionName) {
 }
 
 function remapGhostToMaze(maze, ghost) {
-  if (!ghost || !ghost.timeMs) return null;
+  if (!ghost) return null;
   const startKey = `${maze.start.x},${maze.start.y}`;
   const exitKey = `${maze.exit.x},${maze.exit.y}`;
   const queue = [{ ...maze.start }];
@@ -254,16 +256,27 @@ function remapGhostToMaze(maze, ghost) {
   }
   positions.reverse();
   const denominator = Math.max(1, positions.length - 1);
+  const requestedTimeMs = Number(ghost.timeMs) || 0;
+  const timeMs = requestedTimeMs > 0 ? requestedTimeMs : Math.max(4000, denominator * 90);
   return {
     name: ghost.name,
     color: ghost.color,
-    timeMs: ghost.timeMs,
+    timeMs,
+    isDemo: Boolean(ghost.isDemo),
     path: positions.map(({ x, y }, index) => ({
       x,
       y,
-      t: Math.round(ghost.timeMs * index / denominator),
+      t: Math.round(timeMs * index / denominator),
     })),
   };
+}
+
+function createDemoGhost(maze) {
+  return remapGhostToMaze(maze, {
+    name: "Ghost Runner",
+    color: "#c7d8ff",
+    isDemo: true,
+  });
 }
 
 function recordRoundResults(room) {
@@ -271,7 +284,7 @@ function recordRoundResults(room) {
     .filter((player) => player.finishedAt)
     .sort((first, second) => first.rank - second.rank);
   const roundWinner = results[0];
-  if (roundWinner && (!room.bestRun || roundWinner.timeMs < room.bestRun.timeMs)) {
+  if (roundWinner && (!room.bestRun || room.bestRun.isDemo || roundWinner.timeMs < room.bestRun.timeMs)) {
     room.bestRun = {
       name: roundWinner.name,
       color: roundWinner.color,
@@ -540,7 +553,7 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
         standings: new Map(),
         history: [],
         podium: [],
-        bestRun: null,
+        bestRun: createDemoGhost(maze),
         chat: [],
       };
       rooms.set(code, room);

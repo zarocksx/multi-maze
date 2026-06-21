@@ -6,6 +6,9 @@ const WALL_RIGHT := 2
 const WALL_BOTTOM := 4
 const WALL_LEFT := 8
 const CELEBRATION_COLORS := ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff"]
+const SETTINGS_PATH := "user://settings.cfg"
+const GAMEPAD_DEADZONE := 0.42
+const GHOST_LOOP_PAUSE_MS := 800
 
 var socket := WebSocketPeer.new()
 var player_id := ""
@@ -21,6 +24,7 @@ var go_flash_until_ms := 0
 var power_ups: Array = []
 var podium: Array = []
 var ghost_run: Dictionary = {}
+var waiting_ghost_started_ms := 0
 var current_round := 1
 var last_event_id := ""
 var effects_snapshot_local_ms := 0
@@ -33,6 +37,8 @@ var server_input: LineEdit
 var name_input: LineEdit
 var room_input: LineEdit
 var status_label: Label
+var create_button: Button
+var join_button: Button
 var copy_button: Button
 var start_race_button: Button
 var waiting_label: Label
@@ -55,6 +61,7 @@ var score_rows: VBoxContainer
 var podium_rows: VBoxContainer
 var score_subtitle: Label
 var score_restart_button: Button
+var wall_shake_toggle: CheckButton
 var player_tooltip: Label
 var held_direction := ""
 var move_repeat_timer := 0.0
@@ -77,10 +84,12 @@ var music_note_index := 0
 var audio_players: Array = []
 var audio_player_index := 0
 var scoreboard_animated_round := 0
+var wall_shake_enabled := true
 
 
 func _ready() -> void:
 	random.randomize()
+	_load_settings()
 	_setup_audio()
 	_build_interface()
 	server_input.text = _default_server_url()
@@ -247,7 +256,7 @@ func _build_interface() -> void:
 	name_input.max_length = 16
 	name_input.custom_minimum_size = Vector2(175, 42)
 	play_row.add_child(name_input)
-	var create_button := Button.new()
+	create_button = Button.new()
 	create_button.text = "Créer la course"
 	create_button.custom_minimum_size = Vector2(150, 42)
 	create_button.pressed.connect(_on_create_pressed)
@@ -267,7 +276,7 @@ func _build_interface() -> void:
 	room_input.text_changed.connect(_on_room_text_changed)
 	room_input.text_submitted.connect(func(_text): _on_join_pressed())
 	play_row.add_child(room_input)
-	var join_button := Button.new()
+	join_button = Button.new()
 	join_button.text = "Rejoindre"
 	join_button.custom_minimum_size = Vector2(125, 42)
 	join_button.pressed.connect(_on_join_pressed)
@@ -281,7 +290,7 @@ func _build_interface() -> void:
 	rows.add_child(status_label)
 
 	var help := Label.new()
-	help.text = "Flèches • ZQSD • WASD    |    Atteignez la sortie dorée le plus vite possible"
+	help.text = "Flèches • ZQSD • WASD • Croix / stick gauche    |    Atteignez la sortie dorée"
 	help.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	help.offset_left = 18
 	help.offset_right = -18
@@ -291,6 +300,18 @@ func _build_interface() -> void:
 	help.add_theme_color_override("font_color", Color("9aa9c2"))
 	help.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(help)
+
+	wall_shake_toggle = CheckButton.new()
+	wall_shake_toggle.text = "Secousse écran"
+	wall_shake_toggle.tooltip_text = "Secouer le labyrinthe lors d'une collision avec un mur"
+	wall_shake_toggle.button_pressed = wall_shake_enabled
+	wall_shake_toggle.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	wall_shake_toggle.offset_left = 16
+	wall_shake_toggle.offset_top = -52
+	wall_shake_toggle.offset_right = 196
+	wall_shake_toggle.offset_bottom = -10
+	wall_shake_toggle.toggled.connect(_on_wall_shake_toggled)
+	root.add_child(wall_shake_toggle)
 
 	chat_panel = PanelContainer.new()
 	chat_panel.name = "ChatPanel"
@@ -521,6 +542,22 @@ func _default_server_url() -> String:
 	return LOCAL_SERVER_URL
 
 
+func _load_settings() -> void:
+	var config := ConfigFile.new()
+	if config.load(SETTINGS_PATH) == OK:
+		wall_shake_enabled = bool(
+			config.get_value("accessibility", "wall_shake_enabled", true)
+		)
+
+
+func _on_wall_shake_toggled(enabled: bool) -> void:
+	wall_shake_enabled = enabled
+	var config := ConfigFile.new()
+	config.load(SETTINGS_PATH)
+	config.set_value("accessibility", "wall_shake_enabled", wall_shake_enabled)
+	config.save(SETTINGS_PATH)
+
+
 func _process(delta: float) -> void:
 	_update_network()
 	_update_movement(delta)
@@ -529,6 +566,26 @@ func _process(delta: float) -> void:
 	_update_music(delta)
 	_update_race_hud()
 	_update_player_tooltip()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventJoypadButton:
+		if not event.pressed:
+			return
+	elif event is InputEventJoypadMotion:
+		if absf(event.axis_value) < GAMEPAD_DEADZONE:
+			return
+	else:
+		return
+
+	if get_viewport().gui_get_focus_owner() != null:
+		return
+	if score_restart_button.is_visible_in_tree():
+		score_restart_button.grab_focus()
+	elif start_race_button.is_visible_in_tree():
+		start_race_button.grab_focus()
+	elif room_code.is_empty() and create_button.is_visible_in_tree():
+		create_button.grab_focus()
 
 
 func _update_network() -> void:
@@ -608,6 +665,7 @@ func _handle_message(message: Dictionary) -> void:
 			var next_room_code := str(message.get("room", ""))
 			if next_room_code != room_code:
 				_clear_chat()
+				waiting_ghost_started_ms = Time.get_ticks_msec()
 			room_code = next_room_code
 			host_id = str(message.get("host", ""))
 			maze = message.get("maze", {})
@@ -657,6 +715,8 @@ func _apply_race_metadata(message: Dictionary) -> void:
 		go_flash_until_ms = Time.get_ticks_msec() + 650
 	if race_phase == "waiting":
 		last_event_id = ""
+		if previous_phase != "waiting" or waiting_ghost_started_ms <= 0:
+			waiting_ghost_started_ms = Time.get_ticks_msec()
 	_handle_power_event(message.get("event", {}))
 
 
@@ -947,10 +1007,8 @@ func _update_movement(delta: float) -> void:
 		or _local_effect_active("frozen")
 	):
 		return
-	if get_viewport().gui_get_focus_owner() is LineEdit:
-		held_direction = ""
-		return
-	var direction := _input_direction()
+	var allow_keyboard := not (get_viewport().gui_get_focus_owner() is LineEdit)
+	var direction := _input_direction(allow_keyboard)
 	if direction.is_empty():
 		held_direction = ""
 		move_repeat_timer = 0.0
@@ -1351,20 +1409,46 @@ func _update_player_tooltip() -> void:
 	player_tooltip.visible = true
 
 
-func _input_direction() -> String:
+func _input_direction(allow_keyboard: bool = true) -> String:
 	var direction := ""
-	if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_Z):
-		direction = "up"
-	elif Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
-		direction = "right"
-	elif Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S):
-		direction = "down"
-	elif Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_Q):
-		direction = "left"
+	if allow_keyboard:
+		if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_Z):
+			direction = "up"
+		elif Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
+			direction = "right"
+		elif Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S):
+			direction = "down"
+		elif Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_Q):
+			direction = "left"
+	if direction.is_empty():
+		direction = _gamepad_direction()
 	if direction.is_empty() or not _local_effect_active("confused"):
 		return direction
 	var opposites := {"up": "down", "right": "left", "down": "up", "left": "right"}
 	return str(opposites.get(direction, direction))
+
+
+func _gamepad_direction() -> String:
+	for device in Input.get_connected_joypads():
+		if Input.is_joy_button_pressed(device, JOY_BUTTON_DPAD_UP):
+			return "up"
+		if Input.is_joy_button_pressed(device, JOY_BUTTON_DPAD_RIGHT):
+			return "right"
+		if Input.is_joy_button_pressed(device, JOY_BUTTON_DPAD_DOWN):
+			return "down"
+		if Input.is_joy_button_pressed(device, JOY_BUTTON_DPAD_LEFT):
+			return "left"
+
+		var stick := Vector2(
+			Input.get_joy_axis(device, JOY_AXIS_LEFT_X),
+			Input.get_joy_axis(device, JOY_AXIS_LEFT_Y)
+		)
+		if stick.length() < GAMEPAD_DEADZONE:
+			continue
+		if absf(stick.x) > absf(stick.y):
+			return "right" if stick.x > 0.0 else "left"
+		return "down" if stick.y > 0.0 else "up"
+	return ""
 
 
 func _draw() -> void:
@@ -1387,7 +1471,7 @@ func _draw() -> void:
 		(viewport_size.x - maze_size.x) * 0.5,
 		top_margin + (available.y - maze_size.y) * 0.5
 	)
-	if wall_hit_timer > 0.0:
+	if wall_shake_enabled and wall_hit_timer > 0.0:
 		var shake := wall_hit_timer / 0.16 * 2.8
 		origin += Vector2(sin(animation_time * 91.0), cos(animation_time * 77.0)) * shake
 	last_maze_origin = origin
@@ -1536,12 +1620,21 @@ func _draw_direction_hint(origin: Vector2, cell_size: float) -> void:
 
 
 func _draw_ghost(origin: Vector2, cell_size: float) -> void:
-	if ghost_run.is_empty() or not _race_can_move():
+	var is_waiting_preview := race_phase == "waiting"
+	if ghost_run.is_empty() or (not is_waiting_preview and not _race_can_move()):
 		return
 	var path: Array = ghost_run.get("path", [])
 	if path.is_empty():
 		return
-	var elapsed := maxi(0, Time.get_ticks_msec() - race_start_deadline_ms)
+	var elapsed := 0
+	if is_waiting_preview:
+		var path_duration := int(path[path.size() - 1].get("t", 0))
+		var run_duration := maxi(1, int(ghost_run.get("timeMs", path_duration)))
+		var cycle_duration := run_duration + GHOST_LOOP_PAUSE_MS
+		var cycle_elapsed := maxi(0, Time.get_ticks_msec() - waiting_ghost_started_ms)
+		elapsed = mini(cycle_elapsed % cycle_duration, run_duration)
+	else:
+		elapsed = maxi(0, Time.get_ticks_msec() - race_start_deadline_ms)
 	var previous: Dictionary = path[0]
 	var next: Dictionary = path[path.size() - 1]
 	for index in range(1, path.size()):

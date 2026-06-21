@@ -14,7 +14,8 @@ npm start
 
 Ouvrez ensuite `project.godot` dans Godot et lancez la scène avec F6/F5. Pour tester à deux, lancez deux instances du jeu, créez un salon dans la première, puis saisissez son code dans la seconde.
 
-Commandes : flèches, ZQSD ou WASD.
+Commandes : flèches, ZQSD, WASD, croix directionnelle ou stick gauche d’une manette.
+La secousse de l’écran lors d’une collision avec un mur peut être désactivée en bas à gauche et le choix est mémorisé.
 
 ## Exporter pour le Web
 
