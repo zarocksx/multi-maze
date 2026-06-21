@@ -1,0 +1,8 @@
+.git
+.godot
+server/node_modules
+scripts
+scenes
+project.godot
+export_presets.cfg
+README.md
