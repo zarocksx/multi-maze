@@ -8,7 +8,6 @@ const WALL_LEFT := 8
 
 var socket := WebSocketPeer.new()
 var player_id := ""
-var host_id := ""
 var room_code := ""
 var maze: Dictionary = {}
 var players: Array = []
@@ -21,8 +20,6 @@ var server_input: LineEdit
 var name_input: LineEdit
 var room_input: LineEdit
 var status_label: Label
-var room_label: Label
-var restart_button: Button
 var copy_button: Button
 var held_direction := ""
 var move_repeat_timer := 0.0
@@ -53,6 +50,17 @@ func build_interface() -> void:
 	panel.offset_right = -16
 	panel.custom_minimum_size.y = 142
 	root.add_child(panel)
+	copy_button = Button.new()
+	copy_button.text = "Copier le code"
+	copy_button.visible = false
+	copy_button.custom_minimum_size = Vector2(220, 44)
+	copy_button.pressed.connect(_on_copy_pressed)
+	root.add_child(copy_button)
+	copy_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	copy_button.offset_left = -236
+	copy_button.offset_top = 16
+	copy_button.offset_right = -16
+	copy_button.offset_bottom = 60
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 14)
@@ -105,20 +113,6 @@ func build_interface() -> void:
 	join_button.text = "Rejoindre"
 	join_button.pressed.connect(_on_join_pressed)
 	play_row.add_child(join_button)
-	room_label = Label.new()
-	room_label.text = ""
-	room_label.add_theme_color_override("font_color", Color("ffd166"))
-	play_row.add_child(room_label)
-	copy_button = Button.new()
-	copy_button.text = "Copier le code"
-	copy_button.visible = false
-	copy_button.pressed.connect(_on_copy_pressed)
-	play_row.add_child(copy_button)
-	restart_button = Button.new()
-	restart_button.text = "Nouveau labyrinthe"
-	restart_button.visible = false
-	restart_button.pressed.connect(_on_restart_pressed)
-	play_row.add_child(restart_button)
 	status_label = Label.new()
 	status_label.text = "Créez un salon ou rejoignez-en un avec son code."
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -218,7 +212,6 @@ func handle_message(message: Dictionary) -> void:
 			player_id = str(message.get("playerId", ""))
 		"room":
 			room_code = str(message.get("room", ""))
-			host_id = str(message.get("host", ""))
 			maze = message.get("maze", {})
 			players = message.get("players", [])
 			winner_id = str(message.get("winner", ""))
@@ -226,22 +219,28 @@ func handle_message(message: Dictionary) -> void:
 			refresh_room_controls()
 			queue_redraw()
 		"state":
-			host_id = str(message.get("host", host_id))
 			players = message.get("players", [])
 			winner_id = str(message.get("winner", ""))
 			if not winner_id.is_empty():
 				status_label.text = winner_text()
 			else:
 				status_label.text = "%d joueur(s) • trouvez la sortie !" % players.size()
+			refresh_room_controls()
 			queue_redraw()
 		"error":
 			status_label.text = str(message.get("message", "Erreur du serveur."))
 
 
 func refresh_room_controls() -> void:
-	room_label.text = "Salon : %s" % room_code if not room_code.is_empty() else ""
-	copy_button.visible = not room_code.is_empty()
-	restart_button.visible = not room_code.is_empty() and host_id == player_id
+	var is_in_room := not room_code.is_empty()
+	panel.visible = not is_in_room
+	copy_button.visible = is_in_room
+	if is_in_room:
+		if winner_id.is_empty():
+			copy_button.text = "Copier le code  •  %s" % room_code
+		else:
+			copy_button.text = "%s  •  Copier %s" % [winner_text(), room_code]
+	queue_redraw()
 
 
 func winner_text() -> String:
@@ -295,7 +294,9 @@ func _draw() -> void:
 
 	var width := int(maze.get("width", 1))
 	var height := int(maze.get("height", 1))
-	var top_margin := maxf(174.0, panel.size.y + 28.0 if panel else 174.0)
+	var top_margin := 72.0
+	if room_code.is_empty():
+		top_margin = maxf(174.0, panel.size.y + 28.0 if panel else 174.0)
 	var available := Vector2(viewport_size.x - 48.0, viewport_size.y - top_margin - 58.0)
 	var cell_size := floorf(minf(available.x / width, available.y / height))
 	cell_size = maxf(cell_size, 8.0)
@@ -400,10 +401,6 @@ func _on_room_text_changed(value: String) -> void:
 func _on_copy_pressed() -> void:
 	DisplayServer.clipboard_set(room_code)
 	status_label.text = "Code %s copié." % room_code
-
-
-func _on_restart_pressed() -> void:
-	send_json({"type": "restart"})
 
 
 func _on_viewport_resized() -> void:
