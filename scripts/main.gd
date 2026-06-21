@@ -60,13 +60,23 @@ func _build_interface() -> void:
 	root.add_theme_font_size_override("font_size", 17)
 	layer.add_child(root)
 
+	server_input = LineEdit.new()
+	server_input.visible = false
+	root.add_child(server_input)
+
 	panel = PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	panel.offset_left = 16
+	panel.set_anchor(SIDE_LEFT, 0.5)
+	panel.set_anchor(SIDE_RIGHT, 0.5)
 	panel.offset_top = 14
-	panel.offset_right = -16
-	panel.custom_minimum_size.y = 142
+	panel.custom_minimum_size.y = 158
+	var lobby_style := StyleBoxFlat.new()
+	lobby_style.bg_color = Color("0d1929")
+	lobby_style.border_color = Color(0.32, 0.79, 0.95, 0.42)
+	lobby_style.set_border_width_all(2)
+	lobby_style.set_corner_radius_all(14)
+	panel.add_theme_stylebox_override("panel", lobby_style)
 	root.add_child(panel)
+	_layout_lobby_panel()
 	copy_button = Button.new()
 	copy_button.text = "Copier le code"
 	copy_button.visible = false
@@ -80,61 +90,70 @@ func _build_interface() -> void:
 	copy_button.offset_bottom = 60
 
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 14)
-	margin.add_theme_constant_override("margin_top", 10)
-	margin.add_theme_constant_override("margin_right", 14)
-	margin.add_theme_constant_override("margin_bottom", 10)
+	margin.add_theme_constant_override("margin_left", 22)
+	margin.add_theme_constant_override("margin_top", 14)
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.add_theme_constant_override("margin_bottom", 14)
 	panel.add_child(margin)
 
 	var rows := VBoxContainer.new()
-	rows.add_theme_constant_override("separation", 7)
+	rows.add_theme_constant_override("separation", 8)
 	margin.add_child(rows)
 
 	var title := Label.new()
-	title.text = "A MAZE INC.  •  Course multijoueur"
-	title.add_theme_font_size_override("font_size", 22)
+	title.text = "A MAZE INC."
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 25)
 	title.add_theme_color_override("font_color", Color("83e8ff"))
 	rows.add_child(title)
+	var subtitle := Label.new()
+	subtitle.text = "Créez une course ou rejoignez vos amis avec leur code"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_color_override("font_color", Color("8fa5bd"))
+	rows.add_child(subtitle)
 
-	var server_row := HBoxContainer.new()
-	server_row.add_theme_constant_override("separation", 8)
-	rows.add_child(server_row)
-	var server_caption := Label.new()
-	server_caption.text = "Serveur"
-	server_row.add_child(server_caption)
-	server_input = LineEdit.new()
-	server_input.placeholder_text = "wss://jeu.exemple.fr/ws"
-	server_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	server_row.add_child(server_input)
-	name_input = LineEdit.new()
-	name_input.placeholder_text = "Pseudo"
-	name_input.max_length = 16
-	name_input.custom_minimum_size.x = 145
-	server_row.add_child(name_input)
-
-	var play_row := HBoxContainer.new()
-	play_row.add_theme_constant_override("separation", 8)
+	var play_row := HFlowContainer.new()
+	play_row.alignment = FlowContainer.ALIGNMENT_CENTER
+	play_row.add_theme_constant_override("h_separation", 9)
+	play_row.add_theme_constant_override("v_separation", 7)
 	rows.add_child(play_row)
+	name_input = LineEdit.new()
+	name_input.placeholder_text = "Votre pseudo"
+	name_input.max_length = 16
+	name_input.custom_minimum_size = Vector2(175, 42)
+	play_row.add_child(name_input)
 	var create_button := Button.new()
-	create_button.text = "Créer un salon"
+	create_button.text = "Créer la course"
+	create_button.custom_minimum_size = Vector2(150, 42)
 	create_button.pressed.connect(_on_create_pressed)
+	_apply_button_style(create_button, Color("15546c"), Color("1e718e"), Color("e7fbff"))
 	play_row.add_child(create_button)
+	var or_label := Label.new()
+	or_label.text = "OU"
+	or_label.custom_minimum_size.x = 34
+	or_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	or_label.add_theme_color_override("font_color", Color("60758d"))
+	play_row.add_child(or_label)
 	room_input = LineEdit.new()
 	room_input.placeholder_text = "CODE"
 	room_input.max_length = 4
-	room_input.custom_minimum_size.x = 92
+	room_input.custom_minimum_size = Vector2(94, 42)
+	room_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	room_input.text_changed.connect(_on_room_text_changed)
 	room_input.text_submitted.connect(func(_text): _on_join_pressed())
 	play_row.add_child(room_input)
 	var join_button := Button.new()
 	join_button.text = "Rejoindre"
+	join_button.custom_minimum_size = Vector2(125, 42)
 	join_button.pressed.connect(_on_join_pressed)
+	_apply_button_style(join_button, Color("594619"), Color("745c22"), Color("fff1bd"))
 	play_row.add_child(join_button)
 	status_label = Label.new()
-	status_label.text = "Créez un salon ou rejoignez-en un avec son code."
+	status_label.text = "Prêt pour une nouvelle course."
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	play_row.add_child(status_label)
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status_label.add_theme_color_override("font_color", Color("8fa5bd"))
+	rows.add_child(status_label)
 
 	var help := Label.new()
 	help.text = "Flèches • ZQSD • WASD    |    Atteignez la sortie dorée le plus vite possible"
@@ -208,6 +227,38 @@ func _build_interface() -> void:
 	score_restart_button.visible = false
 	score_restart_button.pressed.connect(_on_score_restart_pressed)
 	score_content.add_child(score_restart_button)
+
+
+func _layout_lobby_panel() -> void:
+	if not panel:
+		return
+	var panel_width := minf(820.0, get_viewport_rect().size.x - 24.0)
+	panel.offset_left = -panel_width * 0.5
+	panel.offset_right = panel_width * 0.5
+	panel.offset_bottom = 172
+
+
+func _apply_button_style(
+	button: Button,
+	normal_color: Color,
+	hover_color: Color,
+	font_color: Color
+) -> void:
+	var colors := {
+		"normal": normal_color,
+		"hover": hover_color,
+		"pressed": hover_color.darkened(0.14),
+	}
+	for state in colors:
+		var style := StyleBoxFlat.new()
+		style.bg_color = colors[state]
+		style.set_corner_radius_all(8)
+		style.content_margin_left = 12
+		style.content_margin_right = 12
+		button.add_theme_stylebox_override(state, style)
+	button.add_theme_color_override("font_color", font_color)
+	button.add_theme_color_override("font_hover_color", font_color)
+	button.add_theme_color_override("font_pressed_color", font_color)
 
 
 func _default_server_url() -> String:
@@ -871,4 +922,5 @@ func _on_score_restart_pressed() -> void:
 
 
 func _on_viewport_resized() -> void:
+	_layout_lobby_panel()
 	queue_redraw()
