@@ -15,6 +15,16 @@ var maze: Dictionary = {}
 var players: Array = []
 var winner_id := ""
 var race_complete := false
+var race_phase := "waiting"
+var race_start_deadline_ms := 0
+var go_flash_until_ms := 0
+var power_ups: Array = []
+var podium: Array = []
+var ghost_run: Dictionary = {}
+var current_round := 1
+var last_event_id := ""
+var effects_snapshot_local_ms := 0
+var power_ups_snapshot_local_ms := 0
 var pending_message: Dictionary = {}
 var last_socket_state := WebSocketPeer.STATE_CLOSED
 
@@ -24,8 +34,23 @@ var name_input: LineEdit
 var room_input: LineEdit
 var status_label: Label
 var copy_button: Button
+var start_race_button: Button
+var waiting_label: Label
+var countdown_label: Label
+var event_toast: Label
+var event_toast_timer := 0.0
+var rank_label: Label
+var effect_hud_label: Label
+var chat_panel: PanelContainer
+var chat_header_label: Label
+var chat_log: RichTextLabel
+var chat_input: LineEdit
+var chat_send_button: Button
+var seen_chat_messages: Dictionary = {}
 var score_panel: PanelContainer
 var score_rows: VBoxContainer
+var podium_rows: VBoxContainer
+var score_subtitle: Label
 var score_restart_button: Button
 var player_tooltip: Label
 var held_direction := ""
@@ -34,15 +59,26 @@ var animation_time := 0.0
 var wall_hit_timer := 0.0
 var visual_positions: Dictionary = {}
 var trail_marks: Array = []
+var movement_ripples: Array = []
+var pickup_particles: Array = []
 var celebration_particles: Array = []
 var random := RandomNumberGenerator.new()
 var last_maze_origin := Vector2.ZERO
 var last_cell_size := 0.0
 var hovered_player_id := ""
+var finish_slow_timer := 0.0
+var direction_hint_until_ms := 0
+var last_countdown_value := ""
+var music_timer := 0.0
+var music_note_index := 0
+var audio_players: Array = []
+var audio_player_index := 0
+var scoreboard_animated_round := 0
 
 
 func _ready() -> void:
 	random.randomize()
+	_setup_audio()
 	_build_interface()
 	server_input.text = _default_server_url()
 	get_viewport().size_changed.connect(_on_viewport_resized)
@@ -88,6 +124,92 @@ func _build_interface() -> void:
 	copy_button.offset_top = 16
 	copy_button.offset_right = -16
 	copy_button.offset_bottom = 60
+	start_race_button = Button.new()
+	start_race_button.text = "Lancer le départ"
+	start_race_button.visible = false
+	start_race_button.custom_minimum_size = Vector2(220, 42)
+	start_race_button.pressed.connect(_on_start_race_pressed)
+	root.add_child(start_race_button)
+	start_race_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	start_race_button.offset_left = -236
+	start_race_button.offset_top = 68
+	start_race_button.offset_right = -16
+	start_race_button.offset_bottom = 110
+	_apply_button_style(
+		start_race_button,
+		Color("1d6b48"),
+		Color("278c60"),
+		Color("e8fff3")
+	)
+	waiting_label = Label.new()
+	waiting_label.text = "En attente du départ de l’hôte…"
+	waiting_label.visible = false
+	waiting_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	waiting_label.add_theme_color_override("font_color", Color("9fb3c8"))
+	waiting_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	waiting_label.offset_left = -286
+	waiting_label.offset_top = 72
+	waiting_label.offset_right = -16
+	waiting_label.offset_bottom = 108
+	root.add_child(waiting_label)
+
+	countdown_label = Label.new()
+	countdown_label.visible = false
+	countdown_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	countdown_label.add_theme_font_size_override("font_size", 96)
+	countdown_label.add_theme_color_override("font_color", Color("ffd166"))
+	countdown_label.add_theme_color_override("font_outline_color", Color("07101b"))
+	countdown_label.add_theme_constant_override("outline_size", 12)
+	countdown_label.set_anchors_preset(Control.PRESET_CENTER)
+	countdown_label.offset_left = -180
+	countdown_label.offset_top = -110
+	countdown_label.offset_right = 180
+	countdown_label.offset_bottom = 110
+	countdown_label.z_index = 20
+	root.add_child(countdown_label)
+
+	event_toast = Label.new()
+	event_toast.visible = false
+	event_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	event_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	event_toast.add_theme_font_size_override("font_size", 19)
+	event_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	event_toast.offset_left = -270
+	event_toast.offset_top = 18
+	event_toast.offset_right = 270
+	event_toast.offset_bottom = 58
+	event_toast.z_index = 15
+	root.add_child(event_toast)
+
+	effect_hud_label = Label.new()
+	effect_hud_label.visible = false
+	effect_hud_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	effect_hud_label.add_theme_font_size_override("font_size", 16)
+	effect_hud_label.add_theme_color_override("font_color", Color("eaf6ff"))
+	var effect_style := StyleBoxFlat.new()
+	effect_style.bg_color = Color(0.04, 0.08, 0.13, 0.88)
+	effect_style.border_color = Color(0.32, 0.79, 0.95, 0.42)
+	effect_style.set_border_width_all(1)
+	effect_style.set_corner_radius_all(8)
+	effect_style.content_margin_left = 11
+	effect_style.content_margin_right = 11
+	effect_style.content_margin_top = 6
+	effect_style.content_margin_bottom = 6
+	effect_hud_label.add_theme_stylebox_override("normal", effect_style)
+	effect_hud_label.position = Vector2(16, 16)
+	effect_hud_label.z_index = 8
+	root.add_child(effect_hud_label)
+
+	rank_label = Label.new()
+	rank_label.visible = false
+	rank_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rank_label.add_theme_font_size_override("font_size", 20)
+	rank_label.add_theme_color_override("font_color", Color("ffd166"))
+	rank_label.position = Vector2(16, 62)
+	rank_label.z_index = 8
+	root.add_child(rank_label)
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 22)
@@ -164,7 +286,69 @@ func _build_interface() -> void:
 	help.offset_bottom = -12
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.add_theme_color_override("font_color", Color("9aa9c2"))
+	help.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(help)
+
+	chat_panel = PanelContainer.new()
+	chat_panel.name = "ChatPanel"
+	chat_panel.visible = false
+	chat_panel.z_index = 6
+	chat_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	chat_panel.offset_left = -378
+	chat_panel.offset_top = -318
+	chat_panel.offset_right = -16
+	chat_panel.offset_bottom = -16
+	var chat_style := StyleBoxFlat.new()
+	chat_style.bg_color = Color(0.04, 0.08, 0.13, 0.94)
+	chat_style.border_color = Color(0.32, 0.79, 0.95, 0.52)
+	chat_style.set_border_width_all(2)
+	chat_style.set_corner_radius_all(12)
+	chat_panel.add_theme_stylebox_override("panel", chat_style)
+	root.add_child(chat_panel)
+
+	var chat_margin := MarginContainer.new()
+	chat_margin.add_theme_constant_override("margin_left", 14)
+	chat_margin.add_theme_constant_override("margin_top", 12)
+	chat_margin.add_theme_constant_override("margin_right", 14)
+	chat_margin.add_theme_constant_override("margin_bottom", 12)
+	chat_panel.add_child(chat_margin)
+	var chat_content := VBoxContainer.new()
+	chat_content.add_theme_constant_override("separation", 8)
+	chat_margin.add_child(chat_content)
+
+	chat_header_label = Label.new()
+	chat_header_label.text = "CHAT  •  0 JOUEUR"
+	chat_header_label.add_theme_font_size_override("font_size", 18)
+	chat_header_label.add_theme_color_override("font_color", Color("83e8ff"))
+	chat_content.add_child(chat_header_label)
+	chat_content.add_child(HSeparator.new())
+
+	chat_log = RichTextLabel.new()
+	chat_log.custom_minimum_size.y = 178
+	chat_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	chat_log.scroll_active = true
+	chat_log.scroll_following = true
+	chat_log.selection_enabled = true
+	chat_log.add_theme_color_override("default_color", Color("d6e2f0"))
+	chat_log.add_theme_font_size_override("normal_font_size", 15)
+	chat_content.add_child(chat_log)
+
+	var chat_input_row := HBoxContainer.new()
+	chat_input_row.add_theme_constant_override("separation", 8)
+	chat_content.add_child(chat_input_row)
+	chat_input = LineEdit.new()
+	chat_input.placeholder_text = "Écrire un message…"
+	chat_input.max_length = 240
+	chat_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chat_input.custom_minimum_size.y = 40
+	chat_input.text_submitted.connect(_on_chat_submitted)
+	chat_input_row.add_child(chat_input)
+	chat_send_button = Button.new()
+	chat_send_button.text = "Envoyer"
+	chat_send_button.custom_minimum_size = Vector2(88, 40)
+	chat_send_button.pressed.connect(_send_chat)
+	_apply_button_style(chat_send_button, Color("15546c"), Color("1e718e"), Color("e7fbff"))
+	chat_input_row.add_child(chat_send_button)
 
 	player_tooltip = Label.new()
 	player_tooltip.visible = false
@@ -177,10 +361,10 @@ func _build_interface() -> void:
 	score_panel.visible = false
 	score_panel.z_index = 10
 	score_panel.set_anchors_preset(Control.PRESET_CENTER)
-	score_panel.offset_left = -270
-	score_panel.offset_top = -205
-	score_panel.offset_right = 270
-	score_panel.offset_bottom = 205
+	score_panel.offset_left = -290
+	score_panel.offset_top = -270
+	score_panel.offset_right = 290
+	score_panel.offset_bottom = 270
 	var score_style := StyleBoxFlat.new()
 	score_style.bg_color = Color("101c2d")
 	score_style.border_color = Color("ffd166")
@@ -205,7 +389,7 @@ func _build_interface() -> void:
 	score_title.add_theme_font_size_override("font_size", 25)
 	score_title.add_theme_color_override("font_color", Color("ffd166"))
 	score_content.add_child(score_title)
-	var score_subtitle := Label.new()
+	score_subtitle = Label.new()
 	score_subtitle.text = "Classement de la course"
 	score_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_subtitle.add_theme_color_override("font_color", Color("9aa9c2"))
@@ -222,8 +406,18 @@ func _build_interface() -> void:
 	score_rows.add_theme_constant_override("separation", 6)
 	score_rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	score_content.add_child(score_rows)
+	score_content.add_child(HSeparator.new())
+	var podium_title := Label.new()
+	podium_title.text = "PODIUM GÉNÉRAL"
+	podium_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	podium_title.add_theme_font_size_override("font_size", 19)
+	podium_title.add_theme_color_override("font_color", Color("83e8ff"))
+	score_content.add_child(podium_title)
+	podium_rows = VBoxContainer.new()
+	podium_rows.add_theme_constant_override("separation", 5)
+	score_content.add_child(podium_rows)
 	score_restart_button = Button.new()
-	score_restart_button.text = "Nouveau labyrinthe  •  Relancer la run"
+	score_restart_button.text = "Préparer un nouveau labyrinthe"
 	score_restart_button.visible = false
 	score_restart_button.pressed.connect(_on_score_restart_pressed)
 	score_content.add_child(score_restart_button)
@@ -261,6 +455,49 @@ func _apply_button_style(
 	button.add_theme_color_override("font_pressed_color", font_color)
 
 
+func _setup_audio() -> void:
+	for _index in range(8):
+		var player := AudioStreamPlayer.new()
+		var stream := AudioStreamGenerator.new()
+		stream.mix_rate = 11025.0
+		stream.buffer_length = 0.45
+		player.stream = stream
+		add_child(player)
+		audio_players.append(player)
+
+
+func _play_tone(
+	frequency: float,
+	duration: float,
+	volume: float = 0.16,
+	waveform: String = "sine",
+	slide: float = 0.0
+) -> void:
+	if audio_players.is_empty():
+		return
+	var player: AudioStreamPlayer = audio_players[audio_player_index % audio_players.size()]
+	audio_player_index += 1
+	player.stop()
+	player.play()
+	var playback = player.get_stream_playback()
+	if not playback:
+		return
+	var sample_rate := 11025.0
+	var frame_count := int(duration * sample_rate)
+	for frame in range(frame_count):
+		var progress := float(frame) / maxf(1.0, frame_count - 1.0)
+		var current_frequency := frequency + slide * progress
+		var phase := TAU * current_frequency * float(frame) / sample_rate
+		var sample := sin(phase)
+		if waveform == "square":
+			sample = 1.0 if sample >= 0.0 else -1.0
+		elif waveform == "noise":
+			sample = random.randf_range(-1.0, 1.0)
+		var envelope := minf(1.0, progress * 14.0) * minf(1.0, (1.0 - progress) * 8.0)
+		var value := sample * volume * envelope
+		playback.push_frame(Vector2(value, value))
+
+
 func _default_server_url() -> String:
 	if OS.has_feature("web"):
 		var javascript := (
@@ -277,6 +514,9 @@ func _process(delta: float) -> void:
 	_update_network()
 	_update_movement(delta)
 	_update_effects(delta)
+	_update_countdown_ui()
+	_update_music(delta)
+	_update_race_hud()
 	_update_player_tooltip()
 
 
@@ -298,11 +538,16 @@ func _update_network() -> void:
 			room_code = ""
 			host_id = ""
 			race_complete = false
+			race_phase = "waiting"
+			race_start_deadline_ms = 0
+			power_ups.clear()
+			podium.clear()
 			players.clear()
 			maze.clear()
 			visual_positions.clear()
 			trail_marks.clear()
 			celebration_particles.clear()
+			_clear_chat()
 			_refresh_room_controls()
 			_refresh_scoreboard()
 			queue_redraw()
@@ -349,12 +594,17 @@ func _handle_message(message: Dictionary) -> void:
 		"hello":
 			player_id = str(message.get("playerId", ""))
 		"room":
-			room_code = str(message.get("room", ""))
+			var next_room_code := str(message.get("room", ""))
+			if next_room_code != room_code:
+				_clear_chat()
+			room_code = next_room_code
 			host_id = str(message.get("host", ""))
 			maze = message.get("maze", {})
 			_set_players(message.get("players", []))
+			_load_chat_history(message.get("chat", []))
 			_set_winner(str(message.get("winner", "")))
 			race_complete = bool(message.get("complete", false))
+			_apply_race_metadata(message)
 			status_label.text = "%d joueur(s) dans le salon." % players.size()
 			_refresh_room_controls()
 			_refresh_scoreboard()
@@ -364,6 +614,7 @@ func _handle_message(message: Dictionary) -> void:
 			_set_players(message.get("players", []))
 			_set_winner(str(message.get("winner", "")))
 			race_complete = bool(message.get("complete", false))
+			_apply_race_metadata(message)
 			if not winner_id.is_empty():
 				status_label.text = _winner_text()
 			else:
@@ -371,14 +622,40 @@ func _handle_message(message: Dictionary) -> void:
 			_refresh_room_controls()
 			_refresh_scoreboard()
 			queue_redraw()
+		"chat":
+			_append_chat_message(message)
 		"error":
 			status_label.text = str(message.get("message", "Erreur du serveur."))
+
+
+func _apply_race_metadata(message: Dictionary) -> void:
+	var previous_phase := race_phase
+	effects_snapshot_local_ms = Time.get_ticks_msec()
+	power_ups_snapshot_local_ms = effects_snapshot_local_ms
+	race_phase = str(message.get("phase", race_phase))
+	power_ups = message.get("powerUps", power_ups)
+	podium = message.get("podium", podium)
+	var next_ghost = message.get("ghost", ghost_run)
+	ghost_run = next_ghost if next_ghost is Dictionary else {}
+	current_round = int(message.get("round", current_round))
+	if race_phase == "countdown":
+		var server_now := int(message.get("serverNow", 0))
+		var start_at := int(message.get("startAt", server_now))
+		race_start_deadline_ms = Time.get_ticks_msec() + maxi(0, start_at - server_now)
+	elif previous_phase == "countdown" and race_phase == "running":
+		go_flash_until_ms = Time.get_ticks_msec() + 650
+	if race_phase == "waiting":
+		last_event_id = ""
+	_handle_power_event(message.get("event", {}))
 
 
 func _refresh_room_controls() -> void:
 	var is_in_room := not room_code.is_empty()
 	panel.visible = not is_in_room
 	copy_button.visible = is_in_room
+	start_race_button.visible = is_in_room and race_phase == "waiting" and host_id == player_id
+	waiting_label.visible = is_in_room and race_phase == "waiting" and host_id != player_id
+	_refresh_chat_panel()
 	if is_in_room:
 		if winner_id.is_empty():
 			copy_button.text = "Copier le code  •  %s" % room_code
@@ -387,11 +664,73 @@ func _refresh_room_controls() -> void:
 	queue_redraw()
 
 
+func _refresh_chat_panel() -> void:
+	if not chat_panel:
+		return
+	var is_in_room := not room_code.is_empty()
+	chat_panel.visible = is_in_room
+	chat_input.editable = is_in_room
+	chat_send_button.disabled = not is_in_room
+	var suffix := "JOUEUR" if players.size() == 1 else "JOUEURS"
+	chat_header_label.text = "CHAT  •  %d %s" % [players.size(), suffix]
+
+
+func _clear_chat() -> void:
+	seen_chat_messages.clear()
+	if chat_log:
+		chat_log.clear()
+
+
+func _load_chat_history(history: Array) -> void:
+	for message in history:
+		if message is Dictionary:
+			_append_chat_message(message)
+
+
+func _append_chat_message(message: Dictionary) -> void:
+	var message_id := str(message.get("id", ""))
+	if message_id.is_empty():
+		message_id = "%s:%s:%s" % [
+			str(message.get("sentAt", 0)),
+			str(message.get("playerId", "")),
+			str(message.get("text", "")),
+		]
+	if seen_chat_messages.has(message_id):
+		return
+	seen_chat_messages[message_id] = true
+	var player_name := str(message.get("name", "Joueur"))
+	var text := str(message.get("text", ""))
+	var color := Color.from_string(str(message.get("color", "#ffffff")), Color.WHITE)
+	chat_log.push_color(color)
+	chat_log.add_text(player_name)
+	chat_log.pop()
+	chat_log.add_text(" : %s" % text)
+	chat_log.newline()
+
+
+func _on_chat_submitted(_value: String) -> void:
+	_send_chat()
+
+
+func _send_chat() -> void:
+	if room_code.is_empty():
+		return
+	var text := chat_input.text.strip_edges()
+	if text.is_empty():
+		return
+	chat_input.clear()
+	_send_json({"type": "chat", "text": text})
+
+
 func _refresh_scoreboard() -> void:
 	score_panel.visible = race_complete
 	score_restart_button.visible = race_complete and host_id == player_id
 	if not race_complete:
 		return
+	var animate_rows := scoreboard_animated_round != current_round
+	if animate_rows:
+		scoreboard_animated_round = current_round
+	score_subtitle.text = "Classement de la manche %d" % current_round
 	player_tooltip.visible = false
 	for child in score_rows.get_children():
 		score_rows.remove_child(child)
@@ -399,7 +738,8 @@ func _refresh_scoreboard() -> void:
 
 	var ranked_players := players.duplicate()
 	ranked_players.sort_custom(_sort_players_by_rank)
-	for player in ranked_players:
+	for index in range(ranked_players.size()):
+		var player: Dictionary = ranked_players[index]
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
 		score_rows.add_child(row)
@@ -425,6 +765,55 @@ func _refresh_scoreboard() -> void:
 			HORIZONTAL_ALIGNMENT_RIGHT,
 			Color("e8f1ff")
 		)
+		if animate_rows:
+			_animate_score_row(row, index * 0.09)
+
+	for child in podium_rows.get_children():
+		podium_rows.remove_child(child)
+		child.queue_free()
+	for index in range(podium.size()):
+		var standing: Dictionary = podium[index]
+		var podium_row := HBoxContainer.new()
+		podium_row.add_theme_constant_override("separation", 8)
+		podium_rows.add_child(podium_row)
+		var color := Color.from_string(str(standing.get("color", "#ffffff")), Color.WHITE)
+		_add_score_label(
+			podium_row,
+			"%d" % (index + 1),
+			40,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			Color("ffd166") if index == 0 else Color("c6d5e8")
+		)
+		_add_score_label(
+			podium_row,
+			str(standing.get("name", "Joueur")),
+			270,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			color
+		)
+		_add_score_label(
+			podium_row,
+			"%d pts  •  %d victoire(s)" % [
+				int(standing.get("points", 0)),
+				int(standing.get("wins", 0)),
+			],
+			155,
+			HORIZONTAL_ALIGNMENT_RIGHT,
+			Color("9fb3c8")
+		)
+		if animate_rows:
+			_animate_score_row(podium_row, 0.22 + index * 0.14)
+
+
+func _animate_score_row(row: Control, delay: float) -> void:
+	row.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	row.scale = Vector2(0.92, 0.92)
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(row, "modulate:a", 1.0, 0.28).set_delay(delay)
+	tween.tween_property(row, "scale", Vector2.ONE, 0.34).set_delay(delay).set_trans(
+		Tween.TRANS_BACK
+	).set_ease(Tween.EASE_OUT)
 
 
 func _add_score_label(
@@ -476,7 +865,7 @@ func _set_players(next_players: Array) -> void:
 
 	players = next_players
 	var present_players: Dictionary = {}
-	var player_just_finished := false
+	var newly_finished_players: Array = []
 	for player in players:
 		var id := str(player.get("id", ""))
 		var target := Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
@@ -484,23 +873,32 @@ func _set_players(next_players: Array) -> void:
 		if not visual_positions.has(id):
 			visual_positions[id] = target
 		elif previous_targets.has(id) and previous_targets[id] != target:
+			var effects: Dictionary = player.get("effects", {})
 			_spawn_trail(
 				visual_positions[id],
 				target,
-				Color.from_string(str(player.get("color", "#ffffff")), Color.WHITE)
+				Color.from_string(str(player.get("color", "#ffffff")), Color.WHITE),
+				int(effects.get("speedMs", 0)) > 0
 			)
 		if (
 			previous_finished.has(id)
 			and not bool(previous_finished[id])
 			and bool(player.get("finished", false))
 		):
-			player_just_finished = true
+			newly_finished_players.append(player)
 
 	for id in visual_positions.keys():
 		if not present_players.has(id):
 			visual_positions.erase(id)
-	if player_just_finished:
-		_start_celebration()
+	for finished_player in newly_finished_players:
+		var finish_color := Color.from_string(
+			str(finished_player.get("color", "#ffffff")),
+			Color.WHITE
+		)
+		_start_celebration(finish_color)
+		_play_tone(520.0, 0.3, 0.18, "square", 520.0)
+		if str(finished_player.get("id", "")) == player_id:
+			finish_slow_timer = 0.48
 
 
 func _set_winner(next_winner: String) -> void:
@@ -510,7 +908,12 @@ func _set_winner(next_winner: String) -> void:
 
 
 func _update_movement(delta: float) -> void:
-	if room_code.is_empty() or _local_player_finished():
+	if (
+		room_code.is_empty()
+		or not _race_can_move()
+		or _local_player_finished()
+		or _local_effect_active("frozen")
+	):
 		return
 	if get_viewport().gui_get_focus_owner() is LineEdit:
 		held_direction = ""
@@ -527,7 +930,17 @@ func _update_movement(delta: float) -> void:
 		move_repeat_timer -= delta
 		if move_repeat_timer <= 0.0:
 			move_repeat_timer = 0.085
+			if _local_effect_active("speed"):
+				move_repeat_timer = 0.04
+			elif _local_effect_active("slow"):
+				move_repeat_timer = 0.14
 			_try_send_move(direction)
+
+
+func _race_can_move() -> bool:
+	if race_phase == "running":
+		return true
+	return race_phase == "countdown" and Time.get_ticks_msec() >= race_start_deadline_ms
 
 
 func _local_player_finished() -> bool:
@@ -537,11 +950,42 @@ func _local_player_finished() -> bool:
 	return false
 
 
+func _local_effect_active(effect_name: String) -> bool:
+	var player := _get_local_player()
+	if player.is_empty():
+		return false
+	return _effect_active(player.get("effects", {}), effect_name)
+
+
+func _get_local_player() -> Dictionary:
+	for player in players:
+		if str(player.get("id", "")) == player_id:
+			return player
+	return {}
+
+
+func _local_effect_remaining(effect_name: String) -> float:
+	var player := _get_local_player()
+	if player.is_empty():
+		return 0.0
+	var effects: Dictionary = player.get("effects", {})
+	var elapsed := Time.get_ticks_msec() - effects_snapshot_local_ms
+	return maxf(0.0, (int(effects.get("%sMs" % effect_name, 0)) - elapsed) / 1000.0)
+
+
+func _effect_active(effects: Dictionary, effect_name: String) -> bool:
+	if effect_name == "shield":
+		return bool(effects.get("shield", false))
+	var elapsed := Time.get_ticks_msec() - effects_snapshot_local_ms
+	return int(effects.get("%sMs" % effect_name, 0)) > elapsed
+
+
 func _try_send_move(direction: String) -> void:
 	if _can_local_player_move(direction):
 		_send_json({"type": "move", "direction": direction})
 	elif wall_hit_timer <= 0.0:
 		wall_hit_timer = 0.16
+		_play_tone(95.0, 0.09, 0.11, "noise")
 
 
 func _can_local_player_move(direction: String) -> bool:
@@ -569,30 +1013,37 @@ func _can_local_player_move(direction: String) -> bool:
 	return true
 
 
-func _spawn_trail(from: Vector2, to: Vector2, color: Color) -> void:
-	for step in range(4):
+func _spawn_trail(from: Vector2, to: Vector2, color: Color, boosted: bool = false) -> void:
+	var mark_count := 7 if boosted else 4
+	for step in range(mark_count):
 		trail_marks.append(
 			{
-				"position": from.lerp(to, float(step) / 4.0),
+				"position": from.lerp(to, float(step) / mark_count),
 				"color": color,
-				"life": 0.22 + step * 0.035,
-				"max_life": 0.36,
+				"life": (0.38 if boosted else 0.22) + step * 0.035,
+				"max_life": 0.58 if boosted else 0.36,
 			}
 		)
+	movement_ripples.append(
+		{"position": to, "color": color, "life": 0.38, "max_life": 0.38}
+	)
 
 
-func _start_celebration() -> void:
+func _start_celebration(dominant_color: Color = Color.TRANSPARENT) -> void:
 	celebration_particles.clear()
 	var goal: Dictionary = maze.get("exit", {})
 	var origin := Vector2(float(goal.get("x", 0)) + 0.5, float(goal.get("y", 0)) + 0.5)
 	for index in range(52):
 		var angle := random.randf_range(0.0, TAU)
 		var speed := random.randf_range(1.4, 4.8)
+		var particle_color := Color(CELEBRATION_COLORS[index % CELEBRATION_COLORS.size()])
+		if dominant_color.a > 0.0 and index < 34:
+			particle_color = dominant_color
 		celebration_particles.append(
 			{
 				"position": origin,
 				"velocity": Vector2.from_angle(angle) * speed,
-				"color": Color(CELEBRATION_COLORS[index % CELEBRATION_COLORS.size()]),
+				"color": particle_color,
 				"life": random.randf_range(0.75, 1.35),
 				"max_life": 1.35,
 			}
@@ -600,8 +1051,13 @@ func _start_celebration() -> void:
 
 
 func _update_effects(delta: float) -> void:
-	animation_time += delta
+	finish_slow_timer = maxf(0.0, finish_slow_timer - delta)
+	var visual_delta := delta * (0.28 if finish_slow_timer > 0.0 else 1.0)
+	animation_time += visual_delta
 	wall_hit_timer = maxf(0.0, wall_hit_timer - delta)
+	if event_toast_timer > 0.0:
+		event_toast_timer = maxf(0.0, event_toast_timer - delta)
+		event_toast.visible = event_toast_timer > 0.0
 
 	var targets: Dictionary = {}
 	for player in players:
@@ -609,32 +1065,195 @@ func _update_effects(delta: float) -> void:
 			float(player.get("x", 0)),
 			float(player.get("y", 0))
 		)
-	var smoothing := 1.0 - exp(-delta * 18.0)
+	var smoothing := 1.0 - exp(-visual_delta * 18.0)
 	for id in visual_positions.keys():
 		if targets.has(id):
 			visual_positions[id] = visual_positions[id].lerp(targets[id], smoothing)
 
 	for index in range(trail_marks.size() - 1, -1, -1):
 		var mark: Dictionary = trail_marks[index]
-		mark["life"] = float(mark.get("life", 0.0)) - delta
+		mark["life"] = float(mark.get("life", 0.0)) - visual_delta
 		if float(mark["life"]) <= 0.0:
 			trail_marks.remove_at(index)
 		else:
 			trail_marks[index] = mark
 
+	for index in range(movement_ripples.size() - 1, -1, -1):
+		var ripple: Dictionary = movement_ripples[index]
+		ripple["life"] = float(ripple.get("life", 0.0)) - visual_delta
+		if float(ripple["life"]) <= 0.0:
+			movement_ripples.remove_at(index)
+		else:
+			movement_ripples[index] = ripple
+
+	for index in range(pickup_particles.size() - 1, -1, -1):
+		var pickup_particle: Dictionary = pickup_particles[index]
+		pickup_particle["life"] = float(pickup_particle.get("life", 0.0)) - visual_delta
+		if float(pickup_particle["life"]) <= 0.0:
+			pickup_particles.remove_at(index)
+		else:
+			pickup_particles[index] = pickup_particle
+
 	for index in range(celebration_particles.size() - 1, -1, -1):
 		var particle: Dictionary = celebration_particles[index]
 		var velocity: Vector2 = particle.get("velocity", Vector2.ZERO)
-		velocity.y += 3.2 * delta
+		velocity.y += 3.2 * visual_delta
 		particle["velocity"] = velocity
-		particle["position"] = particle.get("position", Vector2.ZERO) + velocity * delta
-		particle["life"] = float(particle.get("life", 0.0)) - delta
+		particle["position"] = particle.get("position", Vector2.ZERO) + velocity * visual_delta
+		particle["life"] = float(particle.get("life", 0.0)) - visual_delta
 		if float(particle["life"]) <= 0.0:
 			celebration_particles.remove_at(index)
 		else:
 			celebration_particles[index] = particle
 
 	queue_redraw()
+
+
+func _update_countdown_ui() -> void:
+	var now := Time.get_ticks_msec()
+	if race_phase == "countdown":
+		var remaining := race_start_deadline_ms - now
+		if remaining > 0:
+			countdown_label.text = str(clampi(int(ceil(remaining / 1000.0)), 1, 3))
+			countdown_label.visible = true
+		else:
+			countdown_label.text = "GO !"
+			countdown_label.visible = remaining > -700
+	elif now < go_flash_until_ms:
+		countdown_label.text = "GO !"
+		countdown_label.visible = true
+	else:
+		countdown_label.visible = false
+	if countdown_label.visible and countdown_label.text != last_countdown_value:
+		last_countdown_value = countdown_label.text
+		if countdown_label.text == "GO !":
+			_play_tone(440.0, 0.22, 0.2, "square", 440.0)
+			direction_hint_until_ms = now + 3200
+		else:
+			_play_tone(280.0, 0.11, 0.13, "square")
+	elif not countdown_label.visible:
+		last_countdown_value = ""
+
+
+func _update_music(delta: float) -> void:
+	if not _race_can_move() or _local_player_finished():
+		music_timer = 0.0
+		return
+	var local_player := _get_local_player()
+	if local_player.is_empty():
+		return
+	var goal: Dictionary = maze.get("exit", {})
+	var distance := absf(float(goal.get("x", 0)) - float(local_player.get("x", 0)))
+	distance += absf(float(goal.get("y", 0)) - float(local_player.get("y", 0)))
+	var maximum_distance := maxf(1.0, float(maze.get("width", 1) + maze.get("height", 1) - 2))
+	var progress := clampf(1.0 - distance / maximum_distance, 0.0, 1.0)
+	music_timer -= delta
+	if music_timer <= 0.0:
+		var notes := [110.0, 138.6, 164.8, 220.0]
+		_play_tone(notes[music_note_index % notes.size()], 0.075, 0.025, "square")
+		music_note_index += 1
+		music_timer = lerpf(0.72, 0.23, progress)
+
+
+func _update_race_hud() -> void:
+	var show_race_hud := not room_code.is_empty() and not race_complete and race_phase != "waiting"
+	rank_label.visible = show_race_hud
+	if show_race_hud:
+		var ordered_players := players.duplicate()
+		ordered_players.sort_custom(_sort_live_race)
+		for index in range(ordered_players.size()):
+			if str(ordered_players[index].get("id", "")) == player_id:
+				rank_label.text = "%d%s / %d" % [
+					index + 1,
+					"er" if index == 0 else "e",
+					ordered_players.size(),
+				]
+				break
+
+	var effect_texts: Array[String] = []
+	for effect in ["speed", "slow", "confused", "frozen"]:
+		var remaining := _local_effect_remaining(effect)
+		if remaining <= 0.0:
+			continue
+		var names := {
+			"speed": "TURBO",
+			"slow": "RALENTI",
+			"confused": "COMMANDES INVERSÉES",
+			"frozen": "GELÉ",
+		}
+		effect_texts.append("%s  %.1fs" % [names[effect], remaining])
+	if _local_effect_active("shield"):
+		effect_texts.append("BOUCLIER")
+	effect_hud_label.visible = not effect_texts.is_empty()
+	effect_hud_label.text = "  •  ".join(effect_texts)
+
+
+func _sort_live_race(first: Dictionary, second: Dictionary) -> bool:
+	var first_finished := bool(first.get("finished", false))
+	var second_finished := bool(second.get("finished", false))
+	if first_finished != second_finished:
+		return first_finished
+	if first_finished:
+		return int(first.get("rank", 999)) < int(second.get("rank", 999))
+	var goal: Dictionary = maze.get("exit", {})
+	var first_distance := absf(float(goal.get("x", 0)) - float(first.get("x", 0)))
+	first_distance += absf(float(goal.get("y", 0)) - float(first.get("y", 0)))
+	var second_distance := absf(float(goal.get("x", 0)) - float(second.get("x", 0)))
+	second_distance += absf(float(goal.get("y", 0)) - float(second.get("y", 0)))
+	return first_distance < second_distance
+
+
+func _handle_power_event(event) -> void:
+	if not event is Dictionary:
+		return
+	var event_id := str(event.get("id", ""))
+	if event_id.is_empty() or event_id == last_event_id:
+		return
+	last_event_id = event_id
+	var kind := str(event.get("kind", ""))
+	var color := Color("83e8ff")
+	if kind == "shield":
+		color = Color("ffd166")
+	elif kind == "slow_all" or kind == "confuse_all":
+		color = Color("b58cff")
+	elif kind == "freeze_all":
+		color = Color("8fe7ff")
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(color, 0.92)
+	style.set_corner_radius_all(9)
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	event_toast.add_theme_stylebox_override("normal", style)
+	var luminance := color.r * 0.299 + color.g * 0.587 + color.b * 0.114
+	event_toast.add_theme_color_override(
+		"font_color",
+		Color("07101b") if luminance > 0.58 else Color.WHITE
+	)
+	event_toast.text = str(event.get("message", "Objet mystère activé !"))
+	event_toast_timer = 3.0
+	event_toast.visible = true
+	if kind == "speed":
+		_play_tone(420.0, 0.2, 0.18, "square", 380.0)
+	elif kind == "shield":
+		_play_tone(660.0, 0.24, 0.15, "sine", 220.0)
+	else:
+		_play_tone(180.0, 0.28, 0.15, "square", -80.0)
+	_spawn_pickup_particles(event, color)
+
+
+func _spawn_pickup_particles(event: Dictionary, color: Color) -> void:
+	var start := Vector2(float(event.get("x", 0)) + 0.5, float(event.get("y", 0)) + 0.5)
+	for index in range(14):
+		pickup_particles.append(
+			{
+				"start": start + Vector2.from_angle(index * TAU / 14.0) * 0.28,
+				"target_id": str(event.get("actorId", "")),
+				"color": color,
+				"life": 0.65,
+				"max_life": 0.65,
+				"curve": random.randf_range(-0.3, 0.3),
+			}
+		)
 
 
 func _update_player_tooltip() -> void:
@@ -701,15 +1320,19 @@ func _update_player_tooltip() -> void:
 
 
 func _input_direction() -> String:
+	var direction := ""
 	if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_Z):
-		return "up"
-	if Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
-		return "right"
-	if Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S):
-		return "down"
-	if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_Q):
-		return "left"
-	return ""
+		direction = "up"
+	elif Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
+		direction = "right"
+	elif Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S):
+		direction = "down"
+	elif Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_Q):
+		direction = "left"
+	if direction.is_empty() or not _local_effect_active("confused"):
+		return direction
+	var opposites := {"up": "down", "right": "left", "down": "up", "left": "right"}
+	return str(opposites.get(direction, direction))
 
 
 func _draw() -> void:
@@ -743,10 +1366,16 @@ func _draw() -> void:
 		maze_backing = maze_backing.lerp(Color("54203a"), wall_hit_timer / 0.16 * 0.35)
 	draw_rect(Rect2(origin - Vector2(7, 7), maze_size + Vector2(14, 14)), maze_backing, true)
 	_draw_goal(origin, cell_size)
+	_draw_direction_hint(origin, cell_size)
+	_draw_ghost(origin, cell_size)
+	_draw_power_ups(origin, cell_size)
 	_draw_trails(origin, cell_size)
+	_draw_movement_ripples(origin, cell_size)
+	_draw_pickup_particles(origin, cell_size)
 	_draw_maze_walls(origin, cell_size, width, height)
 	_draw_celebration(origin, cell_size)
 	_draw_players(origin, cell_size)
+	_draw_countdown_fx(viewport_size)
 
 
 func _draw_background(viewport_size: Vector2) -> void:
@@ -800,6 +1429,107 @@ func _draw_goal(origin: Vector2, cell_size: float) -> void:
 	)
 
 
+func _draw_power_ups(origin: Vector2, cell_size: float) -> void:
+	for index in range(power_ups.size()):
+		var power_up: Dictionary = power_ups[index]
+		var center := origin + Vector2(
+			(float(power_up.get("x", 0)) + 0.5) * cell_size,
+			(float(power_up.get("y", 0)) + 0.5) * cell_size
+		)
+		center.y += sin(animation_time * 3.2 + index) * cell_size * 0.07
+		if not bool(power_up.get("active", true)):
+			var elapsed := Time.get_ticks_msec() - power_ups_snapshot_local_ms
+			var remaining := maxf(0.0, float(power_up.get("respawnMs", 0)) - elapsed)
+			var progress := clampf(1.0 - remaining / 8000.0, 0.0, 1.0)
+			var warning_alpha := 0.18
+			if remaining < 2000.0:
+				warning_alpha = 0.35 + (sin(animation_time * 9.0) + 1.0) * 0.18
+			draw_arc(
+				center,
+				cell_size * 0.24,
+				-PI * 0.5,
+				-PI * 0.5 + TAU * progress,
+				28,
+				Color(0.49, 0.87, 1.0, warning_alpha),
+				clampf(cell_size * 0.055, 1.2, 2.5),
+				true
+			)
+			continue
+		var pulse := 1.0 + sin(animation_time * 5.0 + index) * 0.1
+		var radius := clampf(cell_size * 0.25 * pulse, 3.5, 12.0)
+		draw_circle(center, radius + 7.0, Color(0.45, 0.75, 1.0, 0.1))
+		var points := PackedVector2Array()
+		for corner in range(4):
+			var angle := animation_time * 1.8 + corner * PI * 0.5
+			points.append(center + Vector2.from_angle(angle) * radius)
+		draw_colored_polygon(points, Color("7bdfff"))
+		for segment in range(4):
+			var segment_color := Color(CELEBRATION_COLORS[segment])
+			draw_arc(
+				center,
+				radius * 0.72,
+				animation_time * 2.2 + segment * PI * 0.5,
+				animation_time * 2.2 + segment * PI * 0.5 + PI * 0.36,
+				8,
+				segment_color,
+				clampf(cell_size * 0.055, 1.2, 2.4),
+				true
+			)
+		draw_circle(center, radius * 0.22, Color.WHITE)
+
+
+func _draw_direction_hint(origin: Vector2, cell_size: float) -> void:
+	if Time.get_ticks_msec() >= direction_hint_until_ms:
+		return
+	var player := _get_local_player()
+	if player.is_empty():
+		return
+	var id := str(player.get("id", ""))
+	var position: Vector2 = visual_positions.get(
+		id,
+		Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
+	)
+	var from := origin + (position + Vector2(0.5, 0.5)) * cell_size
+	var goal: Dictionary = maze.get("exit", {})
+	var to := origin + Vector2(
+		(float(goal.get("x", 0)) + 0.5) * cell_size,
+		(float(goal.get("y", 0)) + 0.5) * cell_size
+	)
+	for segment in range(14):
+		if segment % 2 == 1:
+			continue
+		var start := from.lerp(to, float(segment) / 14.0)
+		var end := from.lerp(to, float(segment + 1) / 14.0)
+		draw_line(start, end, Color(1.0, 0.82, 0.36, 0.24), 2.0, true)
+
+
+func _draw_ghost(origin: Vector2, cell_size: float) -> void:
+	if ghost_run.is_empty() or not _race_can_move():
+		return
+	var path: Array = ghost_run.get("path", [])
+	if path.is_empty():
+		return
+	var elapsed := maxi(0, Time.get_ticks_msec() - race_start_deadline_ms)
+	var previous: Dictionary = path[0]
+	var next: Dictionary = path[path.size() - 1]
+	for index in range(1, path.size()):
+		next = path[index]
+		if int(next.get("t", 0)) >= elapsed:
+			break
+		previous = next
+	var span := maxi(1, int(next.get("t", 0)) - int(previous.get("t", 0)))
+	var blend := clampf((elapsed - int(previous.get("t", 0))) / float(span), 0.0, 1.0)
+	var position := Vector2(float(previous.get("x", 0)), float(previous.get("y", 0))).lerp(
+		Vector2(float(next.get("x", 0)), float(next.get("y", 0))),
+		blend
+	)
+	var center := origin + (position + Vector2(0.5, 0.5)) * cell_size
+	var color := Color.from_string(str(ghost_run.get("color", "#ffffff")), Color.WHITE)
+	color.a = 0.28
+	draw_circle(center, clampf(cell_size * 0.24, 4.0, 12.0), color)
+	draw_arc(center, cell_size * 0.34, 0.0, TAU, 28, Color(1, 1, 1, 0.16), 1.5, true)
+
+
 func _draw_trails(origin: Vector2, cell_size: float) -> void:
 	for mark in trail_marks:
 		var position: Vector2 = mark.get("position", Vector2.ZERO)
@@ -812,6 +1542,40 @@ func _draw_trails(origin: Vector2, cell_size: float) -> void:
 		color.a = life_ratio * 0.28
 		var center := origin + (position + Vector2(0.5, 0.5)) * cell_size
 		draw_circle(center, cell_size * 0.18 * life_ratio, color)
+
+
+func _draw_movement_ripples(origin: Vector2, cell_size: float) -> void:
+	for ripple in movement_ripples:
+		var life_ratio := clampf(
+			float(ripple.get("life", 0.0)) / float(ripple.get("max_life", 1.0)),
+			0.0,
+			1.0
+		)
+		var position: Vector2 = ripple.get("position", Vector2.ZERO)
+		var center := origin + (position + Vector2(0.5, 0.5)) * cell_size
+		var color: Color = ripple.get("color", Color.WHITE)
+		color.a = life_ratio * 0.4
+		var radius := cell_size * (0.12 + (1.0 - life_ratio) * 0.34)
+		draw_arc(center, radius, 0.0, TAU, 28, color, 2.0, true)
+
+
+func _draw_pickup_particles(origin: Vector2, cell_size: float) -> void:
+	for particle in pickup_particles:
+		var life_ratio := clampf(
+			float(particle.get("life", 0.0)) / float(particle.get("max_life", 1.0)),
+			0.0,
+			1.0
+		)
+		var target_id := str(particle.get("target_id", ""))
+		var target: Vector2 = visual_positions.get(target_id, particle.get("start", Vector2.ZERO))
+		var start: Vector2 = particle.get("start", Vector2.ZERO)
+		var progress := 1.0 - life_ratio
+		var position := start.lerp(target + Vector2(0.5, 0.5), progress * progress)
+		position += Vector2(0, sin(progress * PI) * float(particle.get("curve", 0.0)))
+		var center := origin + position * cell_size
+		var color: Color = particle.get("color", Color.WHITE)
+		color.a = life_ratio
+		draw_circle(center, clampf(cell_size * 0.06 * life_ratio, 1.2, 3.5), color)
 
 
 func _draw_celebration(origin: Vector2, cell_size: float) -> void:
@@ -869,13 +1633,70 @@ func _draw_players(origin: Vector2, cell_size: float) -> void:
 		var visual_position: Vector2 = visual_positions.get(id, target)
 		var center := origin + (visual_position + Vector2(0.5, 0.5)) * cell_size
 		var color := Color.from_string(str(player.get("color", "#ffffff")), Color.WHITE)
+		var effects: Dictionary = player.get("effects", {})
 		var radius := clampf(cell_size * 0.27, 4.0, 14.0)
+		var movement := target - visual_position
+		var body_angle := 0.0
+		var body_scale := Vector2.ONE
+		if movement.length_squared() > 0.0005:
+			body_angle = movement.angle()
+			var stretch := clampf(movement.length() * 0.7, 0.0, 0.24)
+			body_scale = Vector2(1.0 + stretch, 1.0 - stretch * 0.66)
+		else:
+			var breathing := sin(animation_time * 5.0 + float(id.hash() % 11)) * 0.025
+			body_scale = Vector2(1.0 + breathing, 1.0 - breathing)
+		if id == player_id and wall_hit_timer > 0.0:
+			var hit_strength := clampf(wall_hit_timer / 0.18, 0.0, 1.0)
+			body_scale *= Vector2(
+				lerpf(1.0, 0.76, hit_strength),
+				lerpf(1.0, 1.2, hit_strength)
+			)
+		if race_phase == "countdown" and Time.get_ticks_msec() < race_start_deadline_ms:
+			var urgency := clampf(
+				1.0 - float(race_start_deadline_ms - Time.get_ticks_msec()) / 3500.0,
+				0.0,
+				1.0
+			)
+			var phase := animation_time * lerpf(18.0, 42.0, urgency) + float(id.hash() % 17)
+			center += Vector2(sin(phase), cos(phase * 1.37)) * urgency * 1.8
 		var glow := color
 		glow.a = 0.13 + (sin(animation_time * 5.0 + center.x) + 1.0) * 0.025
 		draw_circle(center, radius + 8.0, glow)
-		draw_circle(center + Vector2(0, 2), radius + 3.0, Color(0.01, 0.03, 0.06, 0.85))
-		draw_circle(center, radius, color)
-		draw_circle(center - Vector2(radius * 0.28, radius * 0.28), radius * 0.22, Color(1, 1, 1, 0.55))
+		draw_set_transform(center, body_angle, body_scale)
+		draw_circle(Vector2(0, 2), radius + 3.0, Color(0.01, 0.03, 0.06, 0.85))
+		draw_circle(Vector2.ZERO, radius, color)
+		draw_circle(
+			Vector2(-radius * 0.28, -radius * 0.28),
+			radius * 0.22,
+			Color(1, 1, 1, 0.55)
+		)
+		if _effect_active(effects, "frozen"):
+			draw_circle(Vector2.ZERO, radius * 0.82, Color(0.65, 0.94, 1.0, 0.55))
+		draw_set_transform(Vector2.ZERO)
+		if _effect_active(effects, "shield"):
+			draw_arc(center, radius + 8.0, 0.0, TAU, 36, Color("ffd166"), 3.0, true)
+		if _effect_active(effects, "speed"):
+			draw_arc(
+				center,
+				radius + 9.0,
+				animation_time * 5.0,
+				animation_time * 5.0 + PI * 1.2,
+				24,
+				Color("45d9ff"),
+				3.0,
+				true
+			)
+		if _effect_active(effects, "slow") or _effect_active(effects, "confused"):
+			draw_arc(
+				center,
+				radius + 9.0,
+				-animation_time * 2.5,
+				-animation_time * 2.5 + PI * 1.4,
+				24,
+				Color("b58cff"),
+				3.0,
+				true
+			)
 		if id == player_id:
 			draw_arc(
 				center,
@@ -889,7 +1710,36 @@ func _draw_players(origin: Vector2, cell_size: float) -> void:
 			)
 
 
+func _draw_countdown_fx(viewport_size: Vector2) -> void:
+	var now := Time.get_ticks_msec()
+	if race_phase == "countdown" and now < race_start_deadline_ms:
+		draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(0.01, 0.02, 0.04, 0.34), true)
+	var flash_remaining := go_flash_until_ms - now
+	if race_phase == "countdown" and now >= race_start_deadline_ms:
+		flash_remaining = maxi(flash_remaining, race_start_deadline_ms + 700 - now)
+	if flash_remaining <= 0:
+		return
+	var progress := clampf(1.0 - flash_remaining / 700.0, 0.0, 1.0)
+	draw_rect(
+		Rect2(Vector2.ZERO, viewport_size),
+		Color(1.0, 0.9, 0.55, (1.0 - progress) * 0.16),
+		true
+	)
+	var center := viewport_size * 0.5
+	draw_arc(
+		center,
+		lerpf(20.0, maxf(viewport_size.x, viewport_size.y) * 0.65, progress),
+		0.0,
+		TAU,
+		72,
+		Color(1.0, 0.86, 0.4, (1.0 - progress) * 0.75),
+		lerpf(8.0, 2.0, progress),
+		true
+	)
+
+
 func _on_create_pressed() -> void:
+	_play_tone(330.0, 0.08, 0.06)
 	_connect_and_send({"type": "create", "name": _player_name()})
 
 
@@ -898,6 +1748,7 @@ func _on_join_pressed() -> void:
 	if code.length() != 4:
 		status_label.text = "Le code du salon doit contenir 4 caractères."
 		return
+	_play_tone(392.0, 0.08, 0.06)
 	_connect_and_send({"type": "join", "room": code, "name": _player_name()})
 
 
@@ -915,6 +1766,11 @@ func _on_room_text_changed(value: String) -> void:
 func _on_copy_pressed() -> void:
 	DisplayServer.clipboard_set(room_code)
 	status_label.text = "Code %s copié." % room_code
+
+
+func _on_start_race_pressed() -> void:
+	_play_tone(220.0, 0.1, 0.07, "square")
+	_send_json({"type": "start"})
 
 
 func _on_score_restart_pressed() -> void:

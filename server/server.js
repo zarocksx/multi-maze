@@ -14,6 +14,14 @@ const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const COLORS = ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff", "#ff914d", "#55efc4", "#f7aef8"];
 const MAX_PLAYERS = 8;
 const MOVE_COOLDOWN_MS = 55;
+const COUNTDOWN_MS = 3500;
+const POWER_UP_COUNT = 10;
+const POWER_UP_RESPAWN_MS = 8000;
+const RANK_POINTS = [10, 7, 5, 3, 2, 1, 1, 1];
+const POWER_UP_KINDS = ["speed", "shield", "slow_all", "confuse_all", "freeze_all"];
+const CHAT_MAX_LENGTH = 240;
+const CHAT_HISTORY_LIMIT = 50;
+const CHAT_COOLDOWN_MS = 350;
 
 const DIRECTIONS = {
   up: { dx: 0, dy: -1, wall: WALL_TOP },
@@ -95,7 +103,50 @@ function createRoomCode(rooms) {
   throw new Error("Impossible de générer un code de salon unique.");
 }
 
-function publicPlayer(player) {
+function createPowerUps(maze, count = POWER_UP_COUNT, random = Math.random) {
+  const candidates = [];
+  for (let y = 0; y < maze.height; y += 1) {
+    for (let x = 0; x < maze.width; x += 1) {
+      const isStart = x === maze.start.x && y === maze.start.y;
+      const isExit = x === maze.exit.x && y === maze.exit.y;
+      const farEnoughFromStart = Math.abs(x - maze.start.x) + Math.abs(y - maze.start.y) > 3;
+      if (!isStart && !isExit && farEnoughFromStart) candidates.push({ x, y });
+    }
+  }
+  for (let index = candidates.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
+  }
+  return candidates.slice(0, Math.min(count, candidates.length)).map((position, index) => ({
+    id: `power-${index + 1}`,
+    x: position.x,
+    y: position.y,
+    active: true,
+    respawnAt: 0,
+  }));
+}
+
+function refreshPowerUps(room, now) {
+  for (const powerUp of room.powerUps) {
+    if (!powerUp.active && powerUp.respawnAt <= now) {
+      powerUp.active = true;
+      powerUp.respawnAt = 0;
+    }
+  }
+}
+
+function publicPowerUps(room, now) {
+  refreshPowerUps(room, now);
+  return room.powerUps.map(({ id, x, y, active, respawnAt }) => ({
+    id,
+    x,
+    y,
+    active,
+    respawnMs: active ? 0 : Math.max(0, respawnAt - now),
+  }));
+}
+
+function publicPlayer(player, now) {
   return {
     id: player.id,
     name: player.name,
@@ -105,34 +156,65 @@ function publicPlayer(player) {
     finished: Boolean(player.finishedAt),
     timeMs: player.timeMs || 0,
     rank: player.rank || 0,
+    effects: {
+      speedMs: Math.max(0, (player.speedUntil || 0) - now),
+      slowMs: Math.max(0, (player.slowUntil || 0) - now),
+      confusedMs: Math.max(0, (player.confusedUntil || 0) - now),
+      frozenMs: Math.max(0, (player.frozenUntil || 0) - now),
+      shield: Boolean(player.shield),
+    },
   };
 }
 
 function roomMessage(room) {
+  const now = Date.now();
   return {
     type: "room",
     room: room.code,
     host: room.hostId,
     maze: room.maze,
-    players: [...room.players.values()].map(publicPlayer),
+    players: [...room.players.values()].map((player) => publicPlayer(player, now)),
     winner: room.winner || "",
     complete: Boolean(room.complete),
+    phase: room.phase,
+    startAt: room.startAt,
+    serverNow: now,
+    powerUps: publicPowerUps(room, now),
+    event: room.lastEvent,
+    round: room.round,
+    podium: room.podium,
+    ghost: room.bestRun,
+    chat: room.chat.slice(),
   };
 }
 
 function stateMessage(room) {
+  const now = Date.now();
   return {
     type: "state",
     host: room.hostId,
-    players: [...room.players.values()].map(publicPlayer),
+    players: [...room.players.values()].map((player) => publicPlayer(player, now)),
     winner: room.winner || "",
     complete: Boolean(room.complete),
+    phase: room.phase,
+    startAt: room.startAt,
+    serverNow: now,
+    powerUps: publicPowerUps(room, now),
+    event: room.lastEvent,
+    round: room.round,
+    podium: room.podium,
+    ghost: room.bestRun,
   };
 }
 
 function sanitizeName(value, fallbackNumber) {
   const cleaned = String(value || "").replace(/[<>\u0000-\u001f]/g, "").trim().slice(0, 16);
   return cleaned || `Joueur ${fallbackNumber}`;
+}
+
+function sanitizeChatText(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CHAT_MAX_LENGTH);
 }
 
 function canMove(maze, x, y, directionName) {
@@ -144,21 +226,168 @@ function canMove(maze, x, y, directionName) {
   return (maze.cells[y * maze.width + x] & direction.wall) === 0;
 }
 
+function remapGhostToMaze(maze, ghost) {
+  if (!ghost || !ghost.timeMs) return null;
+  const startKey = `${maze.start.x},${maze.start.y}`;
+  const exitKey = `${maze.exit.x},${maze.exit.y}`;
+  const queue = [{ ...maze.start }];
+  const parents = new Map([[startKey, null]]);
+
+  while (queue.length && !parents.has(exitKey)) {
+    const current = queue.shift();
+    for (const directionName of Object.keys(DIRECTIONS)) {
+      if (!canMove(maze, current.x, current.y, directionName)) continue;
+      const direction = DIRECTIONS[directionName];
+      const next = { x: current.x + direction.dx, y: current.y + direction.dy };
+      const nextKey = `${next.x},${next.y}`;
+      if (parents.has(nextKey)) continue;
+      parents.set(nextKey, current);
+      queue.push(next);
+    }
+  }
+
+  const positions = [];
+  let cursor = { ...maze.exit };
+  while (cursor) {
+    positions.push(cursor);
+    cursor = parents.get(`${cursor.x},${cursor.y}`) || null;
+  }
+  positions.reverse();
+  const denominator = Math.max(1, positions.length - 1);
+  return {
+    name: ghost.name,
+    color: ghost.color,
+    timeMs: ghost.timeMs,
+    path: positions.map(({ x, y }, index) => ({
+      x,
+      y,
+      t: Math.round(ghost.timeMs * index / denominator),
+    })),
+  };
+}
+
+function recordRoundResults(room) {
+  const results = [...room.players.values()]
+    .filter((player) => player.finishedAt)
+    .sort((first, second) => first.rank - second.rank);
+  const roundWinner = results[0];
+  if (roundWinner && (!room.bestRun || roundWinner.timeMs < room.bestRun.timeMs)) {
+    room.bestRun = {
+      name: roundWinner.name,
+      color: roundWinner.color,
+      timeMs: roundWinner.timeMs,
+      path: roundWinner.runPath,
+    };
+  }
+  for (const player of results) {
+    const standing = room.standings.get(player.id) || {
+      id: player.id,
+      name: player.name,
+      color: player.color,
+      points: 0,
+      wins: 0,
+      races: 0,
+      totalTimeMs: 0,
+    };
+    standing.name = player.name;
+    standing.color = player.color;
+    standing.points += RANK_POINTS[player.rank - 1] || 1;
+    standing.wins += player.rank === 1 ? 1 : 0;
+    standing.races += 1;
+    standing.totalTimeMs += player.timeMs;
+    room.standings.set(player.id, standing);
+  }
+  room.history.push({
+    round: room.round,
+    results: results.map((player) => ({
+      id: player.id,
+      name: player.name,
+      color: player.color,
+      rank: player.rank,
+      timeMs: player.timeMs,
+    })),
+  });
+  room.history = room.history.slice(-10);
+  room.podium = [...room.standings.values()]
+    .sort((first, second) =>
+      second.points - first.points || second.wins - first.wins || first.totalTimeMs - second.totalTimeMs)
+    .slice(0, 3)
+    .map(({ id, name, color, points, wins, races }) => ({ id, name, color, points, wins, races }));
+}
+
 function updateRoomCompletion(room) {
+  const wasComplete = room.complete;
   room.complete = room.players.size > 0 && [...room.players.values()].every((player) => player.finishedAt);
+  if (room.complete && !wasComplete) {
+    room.phase = "complete";
+    recordRoundResults(room);
+  }
+}
+
+function applyPowerUp(room, player, now = Date.now(), random = Math.random) {
+  refreshPowerUps(room, now);
+  const powerUp = room.powerUps.find((item) => item.active && item.x === player.x && item.y === player.y);
+  if (!powerUp) return null;
+  powerUp.active = false;
+  powerUp.respawnAt = now + POWER_UP_RESPAWN_MS;
+  const kind = POWER_UP_KINDS[Math.floor(random() * POWER_UP_KINDS.length)];
+  const targets = [];
+  let message = "";
+
+  if (kind === "speed") {
+    player.speedUntil = now + 5000;
+    message = `${player.name} obtient un turbo !`;
+  } else if (kind === "shield") {
+    player.shield = true;
+    message = `${player.name} gagne un bouclier !`;
+  } else {
+    for (const target of room.players.values()) {
+      if (target.id === player.id || target.finishedAt) continue;
+      targets.push(target.id);
+      if (target.shield) {
+        target.shield = false;
+        continue;
+      }
+      if (kind === "slow_all") target.slowUntil = now + 4500;
+      if (kind === "confuse_all") target.confusedUntil = now + 4000;
+      if (kind === "freeze_all") target.frozenUntil = now + 1400;
+    }
+    if (kind === "slow_all") message = `${player.name} ralentit ses adversaires !`;
+    if (kind === "confuse_all") message = `${player.name} inverse les commandes adverses !`;
+    if (kind === "freeze_all") message = `${player.name} gèle ses adversaires !`;
+  }
+
+  room.lastEvent = {
+    id: crypto.randomUUID(),
+    kind,
+    actorId: player.id,
+    targetIds: targets,
+    message,
+    createdAt: now,
+    x: powerUp.x,
+    y: powerUp.y,
+  };
+  return room.lastEvent;
 }
 
 function applyMove(room, player, directionName, now = Date.now()) {
-  if (player.finishedAt || now - player.lastMoveAt < MOVE_COOLDOWN_MS) return false;
+  if (room.phase === "countdown" && now >= room.startAt) room.phase = "running";
+  if (room.phase !== "running" || player.finishedAt || player.frozenUntil > now) return false;
+  let cooldown = MOVE_COOLDOWN_MS;
+  if (player.slowUntil > now) cooldown = 110;
+  if (player.speedUntil > now) cooldown = 28;
+  if (now - player.lastMoveAt < cooldown) return false;
   if (!canMove(room.maze, player.x, player.y, directionName)) return false;
   const direction = DIRECTIONS[directionName];
-  if (!player.startedAt) player.startedAt = now;
   player.x += direction.dx;
   player.y += direction.dy;
   player.lastMoveAt = now;
+  if (!Array.isArray(player.runPath)) player.runPath = [{ x: room.maze.start.x, y: room.maze.start.y, t: 0 }];
+  player.runPath.push({ x: player.x, y: player.y, t: Math.max(0, now - room.startAt) });
+  applyPowerUp(room, player, now);
   if (player.x === room.maze.exit.x && player.y === room.maze.exit.y) {
     player.finishedAt = now;
-    player.timeMs = Math.max(0, player.finishedAt - player.startedAt);
+    player.timeMs = Math.max(0, player.finishedAt - room.startAt);
     room.finishCount += 1;
     player.rank = room.finishCount;
     if (!room.winner) room.winner = player.id;
@@ -169,17 +398,28 @@ function applyMove(room, player, directionName, now = Date.now()) {
 
 function resetRoom(room, nextMaze = generateMaze()) {
   room.maze = nextMaze;
+  room.bestRun = remapGhostToMaze(room.maze, room.bestRun);
   room.winner = "";
   room.complete = false;
   room.finishCount = 0;
+  room.phase = "waiting";
+  room.startAt = 0;
+  room.round = (room.round || 0) + 1;
+  room.powerUps = createPowerUps(room.maze);
+  room.lastEvent = null;
   for (const player of room.players.values()) {
     player.x = room.maze.start.x;
     player.y = room.maze.start.y;
     player.lastMoveAt = 0;
-    player.startedAt = 0;
     player.finishedAt = 0;
     player.timeMs = 0;
     player.rank = 0;
+    player.speedUntil = 0;
+    player.slowUntil = 0;
+    player.confusedUntil = 0;
+    player.frozenUntil = 0;
+    player.shield = false;
+    player.runPath = [{ x: room.maze.start.x, y: room.maze.start.y, t: 0 }];
   }
 }
 
@@ -255,10 +495,16 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
       x: start.x,
       y: start.y,
       lastMoveAt: 0,
-      startedAt: 0,
       finishedAt: 0,
       timeMs: 0,
       rank: 0,
+      speedUntil: 0,
+      slowUntil: 0,
+      confusedUntil: 0,
+      frozenUntil: 0,
+      shield: false,
+      lastChatAt: 0,
+      runPath: [{ x: start.x, y: start.y, t: 0 }],
     };
     room.players.set(socket.id, player);
     socket.roomCode = room.code;
@@ -277,14 +523,25 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
     if (message.type === "create") {
       leaveRoom(socket);
       const code = createRoomCode(rooms);
+      const maze = generateMaze();
       const room = {
         code,
         hostId: socket.id,
-        maze: generateMaze(),
+        maze,
         players: new Map(),
         winner: "",
         complete: false,
         finishCount: 0,
+        phase: "waiting",
+        startAt: 0,
+        round: 1,
+        powerUps: createPowerUps(maze),
+        lastEvent: null,
+        standings: new Map(),
+        history: [],
+        podium: [],
+        bestRun: null,
+        chat: [],
       };
       rooms.set(code, room);
       addPlayer(room, socket, message.name);
@@ -303,8 +560,8 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
         send(socket, { type: "error", message: "Ce salon est complet." });
         return;
       }
-      if (room.complete) {
-        send(socket, { type: "error", message: "Cette course est déjà terminée." });
+      if (room.phase !== "waiting") {
+        send(socket, { type: "error", message: "Cette course a déjà démarré." });
         return;
       }
       leaveRoom(socket);
@@ -324,6 +581,39 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
       if (applyMove(room, player, String(message.direction || ""))) {
         broadcast(room, stateMessage(room));
       }
+      return;
+    }
+
+    if (message.type === "chat") {
+      const now = Date.now();
+      const text = sanitizeChatText(message.text);
+      if (!text || now - player.lastChatAt < CHAT_COOLDOWN_MS) return;
+      player.lastChatAt = now;
+      const chatMessage = {
+        type: "chat",
+        id: crypto.randomUUID(),
+        playerId: player.id,
+        name: player.name,
+        color: player.color,
+        text,
+        sentAt: now,
+      };
+      room.chat.push(chatMessage);
+      room.chat = room.chat.slice(-CHAT_HISTORY_LIMIT);
+      broadcast(room, chatMessage);
+      return;
+    }
+
+    if (message.type === "start") {
+      if (room.hostId !== socket.id) {
+        send(socket, { type: "error", message: "Seul l’hôte peut lancer le départ." });
+        return;
+      }
+      if (room.phase !== "waiting") return;
+      room.phase = "countdown";
+      room.startAt = Date.now() + COUNTDOWN_MS;
+      room.lastEvent = null;
+      broadcast(room, stateMessage(room));
       return;
     }
 
@@ -381,7 +671,10 @@ module.exports = {
   WALL_BOTTOM,
   WALL_LEFT,
   generateMaze,
+  createPowerUps,
   canMove,
+  applyPowerUp,
+  sanitizeChatText,
   applyMove,
   resetRoom,
   createGameServer,
