@@ -42,10 +42,13 @@ var event_toast_timer := 0.0
 var rank_label: Label
 var effect_hud_label: Label
 var chat_panel: PanelContainer
-var chat_header_label: Label
+var chat_header_button: Button
+var chat_separator: HSeparator
 var chat_log: RichTextLabel
 var chat_input: LineEdit
+var chat_input_row: HBoxContainer
 var chat_send_button: Button
+var chat_minimized := false
 var seen_chat_messages: Dictionary = {}
 var score_panel: PanelContainer
 var score_rows: VBoxContainer
@@ -316,12 +319,20 @@ func _build_interface() -> void:
 	chat_content.add_theme_constant_override("separation", 8)
 	chat_margin.add_child(chat_content)
 
-	chat_header_label = Label.new()
-	chat_header_label.text = "CHAT  •  0 JOUEUR"
-	chat_header_label.add_theme_font_size_override("font_size", 18)
-	chat_header_label.add_theme_color_override("font_color", Color("83e8ff"))
-	chat_content.add_child(chat_header_label)
-	chat_content.add_child(HSeparator.new())
+	chat_header_button = Button.new()
+	chat_header_button.text = "CHAT  •  0 JOUEUR    [-]"
+	chat_header_button.flat = true
+	chat_header_button.focus_mode = Control.FOCUS_NONE
+	chat_header_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	chat_header_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	chat_header_button.tooltip_text = "Réduire ou agrandir le chat"
+	chat_header_button.add_theme_font_size_override("font_size", 18)
+	chat_header_button.add_theme_color_override("font_color", Color("83e8ff"))
+	chat_header_button.add_theme_color_override("font_hover_color", Color("b9f3ff"))
+	chat_header_button.pressed.connect(_toggle_chat_panel)
+	chat_content.add_child(chat_header_button)
+	chat_separator = HSeparator.new()
+	chat_content.add_child(chat_separator)
 
 	chat_log = RichTextLabel.new()
 	chat_log.custom_minimum_size.y = 178
@@ -333,7 +344,7 @@ func _build_interface() -> void:
 	chat_log.add_theme_font_size_override("normal_font_size", 15)
 	chat_content.add_child(chat_log)
 
-	var chat_input_row := HBoxContainer.new()
+	chat_input_row = HBoxContainer.new()
 	chat_input_row.add_theme_constant_override("separation", 8)
 	chat_content.add_child(chat_input_row)
 	chat_input = LineEdit.new()
@@ -671,14 +682,35 @@ func _refresh_chat_panel() -> void:
 	chat_panel.visible = is_in_room
 	chat_input.editable = is_in_room
 	chat_send_button.disabled = not is_in_room
+	_refresh_chat_header()
+
+
+func _refresh_chat_header() -> void:
 	var suffix := "JOUEUR" if players.size() == 1 else "JOUEURS"
-	chat_header_label.text = "CHAT  •  %d %s" % [players.size(), suffix]
+	var action := "[+]" if chat_minimized else "[-]"
+	chat_header_button.text = "CHAT  •  %d %s    %s" % [players.size(), suffix, action]
+
+
+func _toggle_chat_panel() -> void:
+	_set_chat_minimized(not chat_minimized)
+
+
+func _set_chat_minimized(value: bool) -> void:
+	chat_minimized = value
+	if not chat_panel:
+		return
+	chat_separator.visible = not chat_minimized
+	chat_log.visible = not chat_minimized
+	chat_input_row.visible = not chat_minimized
+	chat_panel.offset_top = -74.0 if chat_minimized else -318.0
+	_refresh_chat_header()
 
 
 func _clear_chat() -> void:
 	seen_chat_messages.clear()
 	if chat_log:
 		chat_log.clear()
+	_set_chat_minimized(false)
 
 
 func _load_chat_history(history: Array) -> void:
