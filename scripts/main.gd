@@ -25,6 +25,7 @@ var power_ups: Array = []
 var podium: Array = []
 var ghost_run: Dictionary = {}
 var waiting_ghost_started_ms := 0
+var maze_scale := 2
 var current_round := 1
 var last_event_id := ""
 var effects_snapshot_local_ms := 0
@@ -42,6 +43,9 @@ var join_button: Button
 var copy_button: Button
 var start_race_button: Button
 var waiting_label: Label
+var maze_size_controls: VBoxContainer
+var maze_size_label: Label
+var maze_size_slider: HSlider
 var countdown_label: Label
 var event_toast: Label
 var event_toast_timer := 0.0
@@ -164,6 +168,28 @@ func _build_interface() -> void:
 	waiting_label.offset_right = -16
 	waiting_label.offset_bottom = 108
 	root.add_child(waiting_label)
+	maze_size_controls = VBoxContainer.new()
+	maze_size_controls.visible = false
+	maze_size_controls.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	maze_size_controls.offset_left = -236
+	maze_size_controls.offset_top = 118
+	maze_size_controls.offset_right = -16
+	maze_size_controls.offset_bottom = 178
+	root.add_child(maze_size_controls)
+	maze_size_label = Label.new()
+	maze_size_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	maze_size_label.add_theme_color_override("font_color", Color("b9d5ec"))
+	maze_size_controls.add_child(maze_size_label)
+	maze_size_slider = HSlider.new()
+	maze_size_slider.min_value = 1
+	maze_size_slider.max_value = 3
+	maze_size_slider.step = 1
+	maze_size_slider.value = maze_scale
+	maze_size_slider.tick_count = 3
+	maze_size_slider.ticks_on_borders = true
+	maze_size_slider.value_changed.connect(_on_maze_size_changed)
+	maze_size_controls.add_child(maze_size_slider)
+	_update_maze_size_label()
 
 	countdown_label = Label.new()
 	countdown_label.visible = false
@@ -707,6 +733,9 @@ func _apply_race_metadata(message: Dictionary) -> void:
 	var next_ghost = message.get("ghost", ghost_run)
 	ghost_run = next_ghost if next_ghost is Dictionary else {}
 	current_round = int(message.get("round", current_round))
+	maze_scale = clampi(int(message.get("mazeScale", maze_scale)), 1, 3)
+	maze_size_slider.set_value_no_signal(maze_scale)
+	_update_maze_size_label()
 	if race_phase == "countdown":
 		var server_now := int(message.get("serverNow", 0))
 		var start_at := int(message.get("startAt", server_now))
@@ -724,7 +753,9 @@ func _refresh_room_controls() -> void:
 	var is_in_room := not room_code.is_empty()
 	panel.visible = not is_in_room
 	copy_button.visible = is_in_room
-	start_race_button.visible = is_in_room and race_phase == "waiting" and host_id == player_id
+	var is_host_waiting := is_in_room and race_phase == "waiting" and host_id == player_id
+	start_race_button.visible = is_host_waiting
+	maze_size_controls.visible = is_host_waiting
 	waiting_label.visible = is_in_room and race_phase == "waiting" and host_id != player_id
 	_refresh_chat_panel()
 	if is_in_room:
@@ -1463,6 +1494,8 @@ func _draw() -> void:
 	var top_margin := 72.0
 	if room_code.is_empty():
 		top_margin = maxf(174.0, panel.size.y + 28.0 if panel else 174.0)
+	elif race_phase == "waiting":
+		top_margin = 190.0
 	var available := Vector2(viewport_size.x - 48.0, viewport_size.y - top_margin - 58.0)
 	var cell_size := floorf(minf(available.x / width, available.y / height))
 	cell_size = maxf(cell_size, 8.0)
@@ -1896,6 +1929,21 @@ func _on_copy_pressed() -> void:
 func _on_start_race_pressed() -> void:
 	_play_tone(220.0, 0.1, 0.07, "square")
 	_send_json({"type": "start"})
+
+
+func _on_maze_size_changed(value: float) -> void:
+	maze_scale = clampi(roundi(value), 1, 3)
+	maze_size_slider.set_value_no_signal(maze_scale)
+	_update_maze_size_label()
+	if race_phase == "waiting" and host_id == player_id:
+		_send_json({"type": "maze_size", "scale": maze_scale})
+
+
+func _update_maze_size_label() -> void:
+	var names := ["Petite", "Grande", "Géante"]
+	maze_size_label.text = "Taille %s  •  %d × %d" % [
+		names[maze_scale - 1], 19 * maze_scale, 13 * maze_scale
+	]
 
 
 func _on_score_restart_pressed() -> void:

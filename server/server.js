@@ -22,8 +22,13 @@ const POWER_UP_KINDS = ["speed", "shield", "slow_all", "confuse_all", "freeze_al
 const CHAT_MAX_LENGTH = 240;
 const CHAT_HISTORY_LIMIT = 50;
 const CHAT_COOLDOWN_MS = 350;
-const MAZE_WIDTH = 38;
-const MAZE_HEIGHT = 26;
+const BASE_MAZE_WIDTH = 19;
+const BASE_MAZE_HEIGHT = 13;
+const DEFAULT_MAZE_SCALE = 2;
+const MIN_MAZE_SCALE = 1;
+const MAX_MAZE_SCALE = 3;
+const MAZE_WIDTH = BASE_MAZE_WIDTH * DEFAULT_MAZE_SCALE;
+const MAZE_HEIGHT = BASE_MAZE_HEIGHT * DEFAULT_MAZE_SCALE;
 
 const DIRECTIONS = {
   up: { dx: 0, dy: -1, wall: WALL_TOP },
@@ -31,6 +36,15 @@ const DIRECTIONS = {
   down: { dx: 0, dy: 1, wall: WALL_BOTTOM },
   left: { dx: -1, dy: 0, wall: WALL_LEFT },
 };
+
+function normalizeMazeScale(value) {
+  return Math.max(MIN_MAZE_SCALE, Math.min(MAX_MAZE_SCALE, Math.round(Number(value) || DEFAULT_MAZE_SCALE)));
+}
+
+function generateScaledMaze(scale) {
+  const normalizedScale = normalizeMazeScale(scale);
+  return generateMaze(BASE_MAZE_WIDTH * normalizedScale, BASE_MAZE_HEIGHT * normalizedScale);
+}
 
 function generateMaze(width = MAZE_WIDTH, height = MAZE_HEIGHT, random = Math.random) {
   const cells = new Array(width * height).fill(15);
@@ -184,6 +198,7 @@ function roomMessage(room) {
     powerUps: publicPowerUps(room, now),
     event: room.lastEvent,
     round: room.round,
+    mazeScale: room.mazeScale,
     podium: room.podium,
     ghost: room.bestRun,
     chat: room.chat.slice(),
@@ -204,6 +219,7 @@ function stateMessage(room) {
     powerUps: publicPowerUps(room, now),
     event: room.lastEvent,
     round: room.round,
+    mazeScale: room.mazeScale,
     podium: room.podium,
     ghost: room.bestRun,
   };
@@ -409,7 +425,7 @@ function applyMove(room, player, directionName, now = Date.now()) {
   return true;
 }
 
-function resetRoom(room, nextMaze = generateMaze()) {
+function prepareRoomMaze(room, nextMaze) {
   room.maze = nextMaze;
   room.bestRun = remapGhostToMaze(room.maze, room.bestRun);
   room.winner = "";
@@ -417,7 +433,6 @@ function resetRoom(room, nextMaze = generateMaze()) {
   room.finishCount = 0;
   room.phase = "waiting";
   room.startAt = 0;
-  room.round = (room.round || 0) + 1;
   room.powerUps = createPowerUps(room.maze);
   room.lastEvent = null;
   for (const player of room.players.values()) {
@@ -434,6 +449,11 @@ function resetRoom(room, nextMaze = generateMaze()) {
     player.shield = false;
     player.runPath = [{ x: room.maze.start.x, y: room.maze.start.y, t: 0 }];
   }
+}
+
+function resetRoom(room, nextMaze = null) {
+  prepareRoomMaze(room, nextMaze || generateScaledMaze(room.mazeScale));
+  room.round = (room.round || 0) + 1;
 }
 
 function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {}) {
@@ -536,7 +556,7 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
     if (message.type === "create") {
       leaveRoom(socket);
       const code = createRoomCode(rooms);
-      const maze = generateMaze();
+      const maze = generateScaledMaze(DEFAULT_MAZE_SCALE);
       const room = {
         code,
         hostId: socket.id,
@@ -548,6 +568,7 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
         phase: "waiting",
         startAt: 0,
         round: 1,
+        mazeScale: DEFAULT_MAZE_SCALE,
         powerUps: createPowerUps(maze),
         lastEvent: null,
         standings: new Map(),
@@ -627,6 +648,16 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
       room.startAt = Date.now() + COUNTDOWN_MS;
       room.lastEvent = null;
       broadcast(room, stateMessage(room));
+      return;
+    }
+
+    if (message.type === "maze_size") {
+      if (room.hostId !== socket.id || room.phase !== "waiting") return;
+      const nextScale = normalizeMazeScale(message.scale);
+      if (nextScale === room.mazeScale) return;
+      room.mazeScale = nextScale;
+      prepareRoomMaze(room, generateScaledMaze(nextScale));
+      broadcast(room, roomMessage(room));
       return;
     }
 

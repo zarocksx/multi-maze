@@ -256,6 +256,7 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   assert.match(created.room, /^[A-Z2-9]{4}$/);
   assert.equal(created.players.length, 1);
   assert.equal(created.phase, "waiting");
+  assert.equal(created.mazeScale, 2);
   assert.equal(created.ghost.isDemo, true);
   assert.deepEqual(created.ghost.path[0], { x: 0, y: 0, t: 0 });
   assert.deepEqual(created.ghost.path.at(-1), {
@@ -271,6 +272,18 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   assert.equal(updated.players.length, 2);
   assert.equal(joined.room, created.room);
   assert.deepEqual(joined.maze, created.maze);
+
+  const resizedForHost = waitForMessage(first, "room");
+  const resizedForGuest = waitForMessage(second, "room");
+  first.send(JSON.stringify({ type: "maze_size", scale: 3 }));
+  const [hostResize, guestResize] = await Promise.all([resizedForHost, resizedForGuest]);
+  assert.equal(hostResize.mazeScale, 3);
+  assert.equal(hostResize.maze.width, 57);
+  assert.equal(hostResize.maze.height, 39);
+  assert.deepEqual(guestResize.maze, hostResize.maze);
+  second.send(JSON.stringify({ type: "maze_size", scale: 1 }));
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(server.rooms.get(created.room).mazeScale, 3);
 
   const firstChat = waitForMessage(first, "chat");
   const secondChat = waitForMessage(second, "chat");
