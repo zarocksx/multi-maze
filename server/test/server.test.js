@@ -11,6 +11,7 @@ const {
   generateMaze,
   canMove,
   applyMove,
+  resetRoom,
   createGameServer,
 } = require("../server");
 
@@ -98,6 +99,46 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
   assert.equal(second.timeMs, 120);
   assert.equal(second.rank, 2);
   assert.equal(room.complete, true);
+});
+
+test("l’hôte relance tous les joueurs sans remplacer leurs connexions", () => {
+  const originalSocket = {};
+  const player = {
+    id: "host",
+    socket: originalSocket,
+    x: 2,
+    y: 0,
+    lastMoveAt: 270,
+    startedAt: 100,
+    finishedAt: 270,
+    timeMs: 170,
+    rank: 1,
+  };
+  const room = {
+    players: new Map([[player.id, player]]),
+    winner: player.id,
+    complete: true,
+    finishCount: 1,
+  };
+  const nextMaze = {
+    width: 2,
+    height: 1,
+    cells: [WALL_TOP | WALL_BOTTOM | WALL_LEFT, WALL_TOP | WALL_RIGHT | WALL_BOTTOM],
+    start: { x: 0, y: 0 },
+    exit: { x: 1, y: 0 },
+  };
+
+  resetRoom(room, nextMaze);
+
+  assert.equal(room.maze, nextMaze);
+  assert.equal(room.complete, false);
+  assert.equal(room.winner, "");
+  assert.equal(room.finishCount, 0);
+  assert.equal(player.socket, originalSocket);
+  assert.deepEqual(
+    { x: player.x, y: player.y, startedAt: player.startedAt, finishedAt: player.finishedAt, timeMs: player.timeMs, rank: player.rank },
+    { x: 0, y: 0, startedAt: 0, finishedAt: 0, timeMs: 0, rank: 0 },
+  );
 });
 
 test("deux clients peuvent créer et rejoindre le même salon", async (context) => {

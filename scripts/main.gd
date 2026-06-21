@@ -204,7 +204,7 @@ func _build_interface() -> void:
 	score_rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	score_content.add_child(score_rows)
 	score_restart_button = Button.new()
-	score_restart_button.text = "Nouvelle manche"
+	score_restart_button.text = "Nouveau labyrinthe  •  Relancer la run"
 	score_restart_button.visible = false
 	score_restart_button.pressed.connect(_on_score_restart_pressed)
 	score_content.add_child(score_restart_button)

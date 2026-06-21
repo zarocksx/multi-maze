@@ -167,6 +167,22 @@ function applyMove(room, player, directionName, now = Date.now()) {
   return true;
 }
 
+function resetRoom(room, nextMaze = generateMaze()) {
+  room.maze = nextMaze;
+  room.winner = "";
+  room.complete = false;
+  room.finishCount = 0;
+  for (const player of room.players.values()) {
+    player.x = room.maze.start.x;
+    player.y = room.maze.start.y;
+    player.lastMoveAt = 0;
+    player.startedAt = 0;
+    player.finishedAt = 0;
+    player.timeMs = 0;
+    player.rank = 0;
+  }
+}
+
 function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {}) {
   const rooms = new Map();
 
@@ -316,19 +332,7 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
         send(socket, { type: "error", message: "Seul le créateur du salon peut relancer." });
         return;
       }
-      room.maze = generateMaze();
-      room.winner = "";
-      room.complete = false;
-      room.finishCount = 0;
-      for (const currentPlayer of room.players.values()) {
-        currentPlayer.x = room.maze.start.x;
-        currentPlayer.y = room.maze.start.y;
-        currentPlayer.lastMoveAt = 0;
-        currentPlayer.startedAt = 0;
-        currentPlayer.finishedAt = 0;
-        currentPlayer.timeMs = 0;
-        currentPlayer.rank = 0;
-      }
+      resetRoom(room);
       broadcast(room, roomMessage(room));
     }
   }
@@ -379,5 +383,6 @@ module.exports = {
   generateMaze,
   canMove,
   applyMove,
+  resetRoom,
   createGameServer,
 };
