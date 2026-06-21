@@ -25,7 +25,7 @@ var power_ups: Array = []
 var podium: Array = []
 var ghost_run: Dictionary = {}
 var waiting_ghost_started_ms := 0
-var maze_scale := 2
+var maze_scale := 5
 var current_round := 1
 var last_event_id := ""
 var effects_snapshot_local_ms := 0
@@ -182,10 +182,10 @@ func _build_interface() -> void:
 	maze_size_controls.add_child(maze_size_label)
 	maze_size_slider = HSlider.new()
 	maze_size_slider.min_value = 1
-	maze_size_slider.max_value = 3
+	maze_size_slider.max_value = 10
 	maze_size_slider.step = 1
 	maze_size_slider.value = maze_scale
-	maze_size_slider.tick_count = 3
+	maze_size_slider.tick_count = 10
 	maze_size_slider.ticks_on_borders = true
 	maze_size_slider.value_changed.connect(_on_maze_size_changed)
 	maze_size_controls.add_child(maze_size_slider)
@@ -733,7 +733,7 @@ func _apply_race_metadata(message: Dictionary) -> void:
 	var next_ghost = message.get("ghost", ghost_run)
 	ghost_run = next_ghost if next_ghost is Dictionary else {}
 	current_round = int(message.get("round", current_round))
-	maze_scale = clampi(int(message.get("mazeScale", maze_scale)), 1, 3)
+	maze_scale = clampi(int(message.get("mazeScale", maze_scale)), 1, 10)
 	maze_size_slider.set_value_no_signal(maze_scale)
 	_update_maze_size_label()
 	if race_phase == "countdown":
@@ -1932,7 +1932,7 @@ func _on_start_race_pressed() -> void:
 
 
 func _on_maze_size_changed(value: float) -> void:
-	maze_scale = clampi(roundi(value), 1, 3)
+	maze_scale = clampi(roundi(value), 1, 10)
 	maze_size_slider.set_value_no_signal(maze_scale)
 	_update_maze_size_label()
 	if race_phase == "waiting" and host_id == player_id:
@@ -1940,9 +1940,9 @@ func _on_maze_size_changed(value: float) -> void:
 
 
 func _update_maze_size_label() -> void:
-	var names := ["Petite", "Grande", "Géante"]
-	maze_size_label.text = "Taille %s  •  %d × %d" % [
-		names[maze_scale - 1], 19 * maze_scale, 13 * maze_scale
+	var factor := 0.75 + maze_scale * 0.25
+	maze_size_label.text = "Taille %d/10  •  %d × %d" % [
+		maze_scale, roundi(19 * factor), roundi(13 * factor)
 	]
 
 

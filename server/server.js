@@ -24,11 +24,13 @@ const CHAT_HISTORY_LIMIT = 50;
 const CHAT_COOLDOWN_MS = 350;
 const BASE_MAZE_WIDTH = 19;
 const BASE_MAZE_HEIGHT = 13;
-const DEFAULT_MAZE_SCALE = 2;
+const DEFAULT_MAZE_SCALE = 5;
 const MIN_MAZE_SCALE = 1;
-const MAX_MAZE_SCALE = 3;
-const MAZE_WIDTH = BASE_MAZE_WIDTH * DEFAULT_MAZE_SCALE;
-const MAZE_HEIGHT = BASE_MAZE_HEIGHT * DEFAULT_MAZE_SCALE;
+const MAX_MAZE_SCALE = 10;
+const MAZE_SCALE_STEP = 0.25;
+const DEFAULT_MAZE_FACTOR = 0.75 + DEFAULT_MAZE_SCALE * MAZE_SCALE_STEP;
+const MAZE_WIDTH = Math.round(BASE_MAZE_WIDTH * DEFAULT_MAZE_FACTOR);
+const MAZE_HEIGHT = Math.round(BASE_MAZE_HEIGHT * DEFAULT_MAZE_FACTOR);
 
 const DIRECTIONS = {
   up: { dx: 0, dy: -1, wall: WALL_TOP },
@@ -38,12 +40,17 @@ const DIRECTIONS = {
 };
 
 function normalizeMazeScale(value) {
-  return Math.max(MIN_MAZE_SCALE, Math.min(MAX_MAZE_SCALE, Math.round(Number(value) || DEFAULT_MAZE_SCALE)));
+  const scale = Math.round(Number(value) || DEFAULT_MAZE_SCALE);
+  return Math.max(MIN_MAZE_SCALE, Math.min(MAX_MAZE_SCALE, scale));
 }
 
 function generateScaledMaze(scale) {
   const normalizedScale = normalizeMazeScale(scale);
-  return generateMaze(BASE_MAZE_WIDTH * normalizedScale, BASE_MAZE_HEIGHT * normalizedScale);
+  const factor = 0.75 + normalizedScale * MAZE_SCALE_STEP;
+  return generateMaze(
+    Math.round(BASE_MAZE_WIDTH * factor),
+    Math.round(BASE_MAZE_HEIGHT * factor),
+  );
 }
 
 function generateMaze(width = MAZE_WIDTH, height = MAZE_HEIGHT, random = Math.random) {
@@ -119,7 +126,13 @@ function createRoomCode(rooms) {
   throw new Error("Impossible de générer un code de salon unique.");
 }
 
-function createPowerUps(maze, count = POWER_UP_COUNT, random = Math.random) {
+function powerUpCountForMaze(maze) {
+  const defaultArea = MAZE_WIDTH * MAZE_HEIGHT;
+  return Math.max(3, Math.round(POWER_UP_COUNT * maze.width * maze.height / defaultArea));
+}
+
+function createPowerUps(maze, count = null, random = Math.random) {
+  const targetCount = count ?? powerUpCountForMaze(maze);
   const candidates = [];
   for (let y = 0; y < maze.height; y += 1) {
     for (let x = 0; x < maze.width; x += 1) {
@@ -133,7 +146,7 @@ function createPowerUps(maze, count = POWER_UP_COUNT, random = Math.random) {
     const swapIndex = Math.floor(random() * (index + 1));
     [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
   }
-  return candidates.slice(0, Math.min(count, candidates.length)).map((position, index) => ({
+  return candidates.slice(0, Math.min(targetCount, candidates.length)).map((position, index) => ({
     id: `power-${index + 1}`,
     x: position.x,
     y: position.y,

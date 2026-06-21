@@ -16,7 +16,7 @@ Ouvrez ensuite `project.godot` dans Godot et lancez la scène avec F6/F5. Pour t
 
 Commandes : flèches, ZQSD, WASD, croix directionnelle ou stick gauche d’une manette.
 La secousse de l’écran lors d’une collision avec un mur peut être désactivée en bas à gauche et le choix est mémorisé.
-Entre deux courses, l’hôte choisit la taille du prochain labyrinthe avec le slider affiché près du bouton de départ.
+Entre deux courses, l’hôte choisit parmi dix tailles avec le slider près du bouton de départ. Le nombre de power-ups s’adapte à la surface du labyrinthe.
 
 ## Exporter pour le Web
 

@@ -165,6 +165,13 @@ test("les objets mystère sont uniques et appliquent bonus ou malus", () => {
   assert.equal(room.powerUps[0].active, false);
 });
 
+test("le nombre de power-ups suit la surface du labyrinthe", () => {
+  const random = () => 0.42;
+  assert.equal(createPowerUps(generateMaze(19, 13), null, random).length, 3);
+  assert.equal(createPowerUps(generateMaze(38, 26), null, random).length, 10);
+  assert.equal(createPowerUps(generateMaze(62, 42), null, random).length, 26);
+});
+
 test("le serveur bloque tout mouvement avant le départ synchronisé", () => {
   const maze = {
     width: 3,
@@ -256,7 +263,8 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   assert.match(created.room, /^[A-Z2-9]{4}$/);
   assert.equal(created.players.length, 1);
   assert.equal(created.phase, "waiting");
-  assert.equal(created.mazeScale, 2);
+  assert.equal(created.mazeScale, 5);
+  assert.equal(created.powerUps.length, 10);
   assert.equal(created.ghost.isDemo, true);
   assert.deepEqual(created.ghost.path[0], { x: 0, y: 0, t: 0 });
   assert.deepEqual(created.ghost.path.at(-1), {
@@ -275,15 +283,16 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
 
   const resizedForHost = waitForMessage(first, "room");
   const resizedForGuest = waitForMessage(second, "room");
-  first.send(JSON.stringify({ type: "maze_size", scale: 3 }));
+  first.send(JSON.stringify({ type: "maze_size", scale: 10 }));
   const [hostResize, guestResize] = await Promise.all([resizedForHost, resizedForGuest]);
-  assert.equal(hostResize.mazeScale, 3);
-  assert.equal(hostResize.maze.width, 57);
-  assert.equal(hostResize.maze.height, 39);
+  assert.equal(hostResize.mazeScale, 10);
+  assert.equal(hostResize.maze.width, 62);
+  assert.equal(hostResize.maze.height, 42);
+  assert.equal(hostResize.powerUps.length, 26);
   assert.deepEqual(guestResize.maze, hostResize.maze);
   second.send(JSON.stringify({ type: "maze_size", scale: 1 }));
   await new Promise((resolve) => setTimeout(resolve, 25));
-  assert.equal(server.rooms.get(created.room).mazeScale, 3);
+  assert.equal(server.rooms.get(created.room).mazeScale, 10);
 
   const firstChat = waitForMessage(first, "chat");
   const secondChat = waitForMessage(second, "chat");
