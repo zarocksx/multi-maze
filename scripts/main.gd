@@ -9,10 +9,12 @@ const CELEBRATION_COLORS := ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cf
 
 var socket := WebSocketPeer.new()
 var player_id := ""
+var host_id := ""
 var room_code := ""
 var maze: Dictionary = {}
 var players: Array = []
 var winner_id := ""
+var race_complete := false
 var pending_message: Dictionary = {}
 var last_socket_state := WebSocketPeer.STATE_CLOSED
 
@@ -22,6 +24,10 @@ var name_input: LineEdit
 var room_input: LineEdit
 var status_label: Label
 var copy_button: Button
+var score_panel: PanelContainer
+var score_rows: VBoxContainer
+var score_restart_button: Button
+var player_tooltip: Label
 var held_direction := ""
 var move_repeat_timer := 0.0
 var animation_time := 0.0
@@ -30,6 +36,9 @@ var visual_positions: Dictionary = {}
 var trail_marks: Array = []
 var celebration_particles: Array = []
 var random := RandomNumberGenerator.new()
+var last_maze_origin := Vector2.ZERO
+var last_cell_size := 0.0
+var hovered_player_id := ""
 
 
 func _ready() -> void:
@@ -128,7 +137,7 @@ func _build_interface() -> void:
 	play_row.add_child(status_label)
 
 	var help := Label.new()
-	help.text = "Flèches • ZQSD • WASD    |    Premier point à la sortie dorée = victoire"
+	help.text = "Flèches • ZQSD • WASD    |    Atteignez la sortie dorée le plus vite possible"
 	help.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	help.offset_left = 18
 	help.offset_right = -18
@@ -137,6 +146,68 @@ func _build_interface() -> void:
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.add_theme_color_override("font_color", Color("9aa9c2"))
 	root.add_child(help)
+
+	player_tooltip = Label.new()
+	player_tooltip.visible = false
+	player_tooltip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	player_tooltip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	player_tooltip.z_index = 5
+	root.add_child(player_tooltip)
+
+	score_panel = PanelContainer.new()
+	score_panel.visible = false
+	score_panel.z_index = 10
+	score_panel.set_anchors_preset(Control.PRESET_CENTER)
+	score_panel.offset_left = -270
+	score_panel.offset_top = -205
+	score_panel.offset_right = 270
+	score_panel.offset_bottom = 205
+	var score_style := StyleBoxFlat.new()
+	score_style.bg_color = Color("101c2d")
+	score_style.border_color = Color("ffd166")
+	score_style.set_border_width_all(2)
+	score_style.set_corner_radius_all(14)
+	score_panel.add_theme_stylebox_override("panel", score_style)
+	root.add_child(score_panel)
+
+	var score_margin := MarginContainer.new()
+	score_margin.add_theme_constant_override("margin_left", 24)
+	score_margin.add_theme_constant_override("margin_top", 20)
+	score_margin.add_theme_constant_override("margin_right", 24)
+	score_margin.add_theme_constant_override("margin_bottom", 20)
+	score_panel.add_child(score_margin)
+	var score_content := VBoxContainer.new()
+	score_content.add_theme_constant_override("separation", 12)
+	score_margin.add_child(score_content)
+
+	var score_title := Label.new()
+	score_title.text = "TOUT LE MONDE EST ARRIVÉ !"
+	score_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	score_title.add_theme_font_size_override("font_size", 25)
+	score_title.add_theme_color_override("font_color", Color("ffd166"))
+	score_content.add_child(score_title)
+	var score_subtitle := Label.new()
+	score_subtitle.text = "Classement de la course"
+	score_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	score_subtitle.add_theme_color_override("font_color", Color("9aa9c2"))
+	score_content.add_child(score_subtitle)
+	score_content.add_child(HSeparator.new())
+
+	var score_header := HBoxContainer.new()
+	score_content.add_child(score_header)
+	_add_score_label(score_header, "#", 48, HORIZONTAL_ALIGNMENT_LEFT, Color("9aa9c2"))
+	_add_score_label(score_header, "Joueur", 280, HORIZONTAL_ALIGNMENT_LEFT, Color("9aa9c2"))
+	_add_score_label(score_header, "Temps", 130, HORIZONTAL_ALIGNMENT_RIGHT, Color("9aa9c2"))
+
+	score_rows = VBoxContainer.new()
+	score_rows.add_theme_constant_override("separation", 6)
+	score_rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	score_content.add_child(score_rows)
+	score_restart_button = Button.new()
+	score_restart_button.text = "Nouvelle manche"
+	score_restart_button.visible = false
+	score_restart_button.pressed.connect(_on_score_restart_pressed)
+	score_content.add_child(score_restart_button)
 
 
 func _default_server_url() -> String:
@@ -155,6 +226,7 @@ func _process(delta: float) -> void:
 	_update_network()
 	_update_movement(delta)
 	_update_effects(delta)
+	_update_player_tooltip()
 
 
 func _update_network() -> void:
@@ -173,12 +245,15 @@ func _update_network() -> void:
 		elif state == WebSocketPeer.STATE_CLOSED and not room_code.is_empty():
 			status_label.text = "Connexion perdue. Vérifiez le serveur."
 			room_code = ""
+			host_id = ""
+			race_complete = false
 			players.clear()
 			maze.clear()
 			visual_positions.clear()
 			trail_marks.clear()
 			celebration_particles.clear()
 			_refresh_room_controls()
+			_refresh_scoreboard()
 			queue_redraw()
 
 	while (
@@ -224,20 +299,26 @@ func _handle_message(message: Dictionary) -> void:
 			player_id = str(message.get("playerId", ""))
 		"room":
 			room_code = str(message.get("room", ""))
+			host_id = str(message.get("host", ""))
 			maze = message.get("maze", {})
 			_set_players(message.get("players", []))
 			_set_winner(str(message.get("winner", "")))
+			race_complete = bool(message.get("complete", false))
 			status_label.text = "%d joueur(s) dans le salon." % players.size()
 			_refresh_room_controls()
+			_refresh_scoreboard()
 			queue_redraw()
 		"state":
+			host_id = str(message.get("host", host_id))
 			_set_players(message.get("players", []))
 			_set_winner(str(message.get("winner", "")))
+			race_complete = bool(message.get("complete", false))
 			if not winner_id.is_empty():
 				status_label.text = _winner_text()
 			else:
 				status_label.text = "%d joueur(s) • trouvez la sortie !" % players.size()
 			_refresh_room_controls()
+			_refresh_scoreboard()
 			queue_redraw()
 		"error":
 			status_label.text = str(message.get("message", "Erreur du serveur."))
@@ -255,6 +336,73 @@ func _refresh_room_controls() -> void:
 	queue_redraw()
 
 
+func _refresh_scoreboard() -> void:
+	score_panel.visible = race_complete
+	score_restart_button.visible = race_complete and host_id == player_id
+	if not race_complete:
+		return
+	player_tooltip.visible = false
+	for child in score_rows.get_children():
+		score_rows.remove_child(child)
+		child.queue_free()
+
+	var ranked_players := players.duplicate()
+	ranked_players.sort_custom(_sort_players_by_rank)
+	for player in ranked_players:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		score_rows.add_child(row)
+		var color := Color.from_string(str(player.get("color", "#ffffff")), Color.WHITE)
+		_add_score_label(
+			row,
+			"%d." % int(player.get("rank", 0)),
+			40,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			color
+		)
+		_add_score_label(
+			row,
+			str(player.get("name", "Joueur")),
+			280,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			color
+		)
+		_add_score_label(
+			row,
+			_format_time(int(player.get("timeMs", 0))),
+			130,
+			HORIZONTAL_ALIGNMENT_RIGHT,
+			Color("e8f1ff")
+		)
+
+
+func _add_score_label(
+	parent: Container,
+	text: String,
+	minimum_width: float,
+	alignment: HorizontalAlignment,
+	color: Color
+) -> void:
+	var label := Label.new()
+	label.text = text
+	label.custom_minimum_size.x = minimum_width
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.horizontal_alignment = alignment
+	label.add_theme_color_override("font_color", color)
+	parent.add_child(label)
+
+
+func _sort_players_by_rank(first: Dictionary, second: Dictionary) -> bool:
+	return int(first.get("rank", 999)) < int(second.get("rank", 999))
+
+
+func _format_time(time_ms: int) -> String:
+	var minutes := int(time_ms / 60000)
+	var seconds := int(time_ms / 1000) % 60
+	var milliseconds := time_ms % 1000
+	return "%02d:%02d.%03d" % [minutes, seconds, milliseconds]
+
+
 func _winner_text() -> String:
 	for player in players:
 		if str(player.get("id", "")) == winner_id:
@@ -266,14 +414,18 @@ func _winner_text() -> String:
 
 func _set_players(next_players: Array) -> void:
 	var previous_targets: Dictionary = {}
+	var previous_finished: Dictionary = {}
 	for player in players:
-		previous_targets[str(player.get("id", ""))] = Vector2(
+		var previous_id := str(player.get("id", ""))
+		previous_targets[previous_id] = Vector2(
 			float(player.get("x", 0)),
 			float(player.get("y", 0))
 		)
+		previous_finished[previous_id] = bool(player.get("finished", false))
 
 	players = next_players
 	var present_players: Dictionary = {}
+	var player_just_finished := false
 	for player in players:
 		var id := str(player.get("id", ""))
 		var target := Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
@@ -286,23 +438,28 @@ func _set_players(next_players: Array) -> void:
 				target,
 				Color.from_string(str(player.get("color", "#ffffff")), Color.WHITE)
 			)
+		if (
+			previous_finished.has(id)
+			and not bool(previous_finished[id])
+			and bool(player.get("finished", false))
+		):
+			player_just_finished = true
 
 	for id in visual_positions.keys():
 		if not present_players.has(id):
 			visual_positions.erase(id)
+	if player_just_finished:
+		_start_celebration()
 
 
 func _set_winner(next_winner: String) -> void:
-	var has_new_winner := winner_id.is_empty() and not next_winner.is_empty()
 	winner_id = next_winner
-	if has_new_winner:
-		_start_celebration()
-	elif winner_id.is_empty():
+	if winner_id.is_empty():
 		celebration_particles.clear()
 
 
 func _update_movement(delta: float) -> void:
-	if room_code.is_empty() or not winner_id.is_empty():
+	if room_code.is_empty() or _local_player_finished():
 		return
 	if get_viewport().gui_get_focus_owner() is LineEdit:
 		held_direction = ""
@@ -320,6 +477,13 @@ func _update_movement(delta: float) -> void:
 		if move_repeat_timer <= 0.0:
 			move_repeat_timer = 0.085
 			_try_send_move(direction)
+
+
+func _local_player_finished() -> bool:
+	for player in players:
+		if str(player.get("id", "")) == player_id:
+			return bool(player.get("finished", false))
+	return false
 
 
 func _try_send_move(direction: String) -> void:
@@ -422,6 +586,69 @@ func _update_effects(delta: float) -> void:
 	queue_redraw()
 
 
+func _update_player_tooltip() -> void:
+	if maze.is_empty() or last_cell_size <= 0.0 or race_complete:
+		player_tooltip.visible = false
+		hovered_player_id = ""
+		return
+
+	var mouse_position := get_viewport().get_mouse_position()
+	var hovered_player: Dictionary = {}
+	var closest_distance := INF
+	for player in players:
+		var id := str(player.get("id", ""))
+		var target := Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
+		var visual_position: Vector2 = visual_positions.get(id, target)
+		var center := last_maze_origin + (visual_position + Vector2(0.5, 0.5)) * last_cell_size
+		var distance := mouse_position.distance_to(center)
+		if distance <= last_cell_size * 0.38 + 6.0 and distance < closest_distance:
+			hovered_player = player
+			closest_distance = distance
+
+	if hovered_player.is_empty():
+		player_tooltip.visible = false
+		hovered_player_id = ""
+		return
+
+	var id := str(hovered_player.get("id", ""))
+	var target := Vector2(
+		float(hovered_player.get("x", 0)),
+		float(hovered_player.get("y", 0))
+	)
+	var visual_position: Vector2 = visual_positions.get(id, target)
+	var center := last_maze_origin + (visual_position + Vector2(0.5, 0.5)) * last_cell_size
+	if hovered_player_id != id:
+		hovered_player_id = id
+		var color := Color.from_string(
+			str(hovered_player.get("color", "#ffffff")),
+			Color.WHITE
+		)
+		var style := StyleBoxFlat.new()
+		style.bg_color = color
+		style.set_corner_radius_all(6)
+		style.content_margin_left = 10
+		style.content_margin_right = 10
+		style.content_margin_top = 5
+		style.content_margin_bottom = 5
+		player_tooltip.add_theme_stylebox_override("normal", style)
+		var luminance := color.r * 0.299 + color.g * 0.587 + color.b * 0.114
+		var text_color := Color("07101b") if luminance > 0.58 else Color.WHITE
+		player_tooltip.add_theme_color_override("font_color", text_color)
+		player_tooltip.text = str(hovered_player.get("name", "Joueur"))
+		player_tooltip.reset_size()
+		player_tooltip.size = player_tooltip.get_combined_minimum_size()
+
+	var tooltip_position := center - Vector2(
+		player_tooltip.size.x * 0.5,
+		last_cell_size * 0.38 + player_tooltip.size.y + 10.0
+	)
+	var viewport_size := get_viewport_rect().size
+	tooltip_position.x = clampf(tooltip_position.x, 6.0, viewport_size.x - player_tooltip.size.x - 6.0)
+	tooltip_position.y = maxf(6.0, tooltip_position.y)
+	player_tooltip.position = tooltip_position
+	player_tooltip.visible = true
+
+
 func _input_direction() -> String:
 	if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_Z):
 		return "up"
@@ -457,6 +684,8 @@ func _draw() -> void:
 	if wall_hit_timer > 0.0:
 		var shake := wall_hit_timer / 0.16 * 2.8
 		origin += Vector2(sin(animation_time * 91.0), cos(animation_time * 77.0)) * shake
+	last_maze_origin = origin
+	last_cell_size = cell_size
 
 	var maze_backing := Color("0d1b2d")
 	if wall_hit_timer > 0.0:
@@ -635,6 +864,10 @@ func _on_room_text_changed(value: String) -> void:
 func _on_copy_pressed() -> void:
 	DisplayServer.clipboard_set(room_code)
 	status_label.text = "Code %s copié." % room_code
+
+
+func _on_score_restart_pressed() -> void:
+	_send_json({"type": "restart"})
 
 
 func _on_viewport_resized() -> void:

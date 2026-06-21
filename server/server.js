@@ -102,6 +102,9 @@ function publicPlayer(player) {
     color: player.color,
     x: player.x,
     y: player.y,
+    finished: Boolean(player.finishedAt),
+    timeMs: player.timeMs || 0,
+    rank: player.rank || 0,
   };
 }
 
@@ -113,6 +116,7 @@ function roomMessage(room) {
     maze: room.maze,
     players: [...room.players.values()].map(publicPlayer),
     winner: room.winner || "",
+    complete: Boolean(room.complete),
   };
 }
 
@@ -122,6 +126,7 @@ function stateMessage(room) {
     host: room.hostId,
     players: [...room.players.values()].map(publicPlayer),
     winner: room.winner || "",
+    complete: Boolean(room.complete),
   };
 }
 
@@ -139,15 +144,25 @@ function canMove(maze, x, y, directionName) {
   return (maze.cells[y * maze.width + x] & direction.wall) === 0;
 }
 
+function updateRoomCompletion(room) {
+  room.complete = room.players.size > 0 && [...room.players.values()].every((player) => player.finishedAt);
+}
+
 function applyMove(room, player, directionName, now = Date.now()) {
-  if (room.winner || now - player.lastMoveAt < MOVE_COOLDOWN_MS) return false;
+  if (player.finishedAt || now - player.lastMoveAt < MOVE_COOLDOWN_MS) return false;
   if (!canMove(room.maze, player.x, player.y, directionName)) return false;
   const direction = DIRECTIONS[directionName];
+  if (!player.startedAt) player.startedAt = now;
   player.x += direction.dx;
   player.y += direction.dy;
   player.lastMoveAt = now;
   if (player.x === room.maze.exit.x && player.y === room.maze.exit.y) {
-    room.winner = player.id;
+    player.finishedAt = now;
+    player.timeMs = Math.max(0, player.finishedAt - player.startedAt);
+    room.finishCount += 1;
+    player.rank = room.finishCount;
+    if (!room.winner) room.winner = player.id;
+    updateRoomCompletion(room);
   }
   return true;
 }
@@ -210,6 +225,7 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
       return;
     }
     if (room.hostId === socket.id) room.hostId = room.players.keys().next().value;
+    updateRoomCompletion(room);
     broadcast(room, stateMessage(room));
   }
 
@@ -223,6 +239,10 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
       x: start.x,
       y: start.y,
       lastMoveAt: 0,
+      startedAt: 0,
+      finishedAt: 0,
+      timeMs: 0,
+      rank: 0,
     };
     room.players.set(socket.id, player);
     socket.roomCode = room.code;
@@ -247,6 +267,8 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
         maze: generateMaze(),
         players: new Map(),
         winner: "",
+        complete: false,
+        finishCount: 0,
       };
       rooms.set(code, room);
       addPlayer(room, socket, message.name);
@@ -263,6 +285,10 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
       }
       if (room.players.size >= MAX_PLAYERS) {
         send(socket, { type: "error", message: "Ce salon est complet." });
+        return;
+      }
+      if (room.complete) {
+        send(socket, { type: "error", message: "Cette course est déjà terminée." });
         return;
       }
       leaveRoom(socket);
@@ -292,10 +318,16 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
       }
       room.maze = generateMaze();
       room.winner = "";
+      room.complete = false;
+      room.finishCount = 0;
       for (const currentPlayer of room.players.values()) {
         currentPlayer.x = room.maze.start.x;
         currentPlayer.y = room.maze.start.y;
         currentPlayer.lastMoveAt = 0;
+        currentPlayer.startedAt = 0;
+        currentPlayer.finishedAt = 0;
+        currentPlayer.timeMs = 0;
+        currentPlayer.rank = 0;
       }
       broadcast(room, roomMessage(room));
     }

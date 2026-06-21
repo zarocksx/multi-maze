@@ -43,7 +43,8 @@ Sur l’offre gratuite, Render met le service en veille après une période sans
 - Le serveur génère un labyrinthe de 19 × 13 cases.
 - Jusqu’à 8 joueurs par salon.
 - Tous commencent en haut à gauche ; la sortie dorée est en bas à droite.
-- Le premier joueur à atteindre la sortie gagne.
-- Le créateur du salon peut générer une nouvelle manche.
+- Chaque chronomètre démarre au premier déplacement valide du joueur.
+- Tous les joueurs peuvent terminer ; le classement apparaît lorsque le dernier atteint la sortie.
+- Le créateur du salon peut lancer une nouvelle manche depuis le tableau des scores.
 
 Tests du serveur : `cd server && npm test`.

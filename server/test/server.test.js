@@ -10,6 +10,7 @@ const {
   WALL_LEFT,
   generateMaze,
   canMove,
+  applyMove,
   createGameServer,
 } = require("../server");
 
@@ -65,6 +66,38 @@ test("le générateur produit des murs cohérents et un labyrinthe entièrement 
   }
 
   assert.equal(visited.size, maze.width * maze.height);
+});
+
+test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", () => {
+  const maze = {
+    width: 3,
+    height: 1,
+    cells: [WALL_TOP | WALL_BOTTOM | WALL_LEFT, WALL_TOP | WALL_BOTTOM, WALL_TOP | WALL_RIGHT | WALL_BOTTOM],
+    start: { x: 0, y: 0 },
+    exit: { x: 2, y: 0 },
+  };
+  const first = { id: "first", x: 0, y: 0, lastMoveAt: 0, startedAt: 0, finishedAt: 0, timeMs: 0, rank: 0 };
+  const second = { id: "second", x: 0, y: 0, lastMoveAt: 0, startedAt: 0, finishedAt: 0, timeMs: 0, rank: 0 };
+  const room = {
+    maze,
+    players: new Map([[first.id, first], [second.id, second]]),
+    winner: "",
+    complete: false,
+    finishCount: 0,
+  };
+
+  assert.equal(applyMove(room, first, "right", 100), true);
+  assert.equal(applyMove(room, first, "right", 200), true);
+  assert.equal(first.timeMs, 100);
+  assert.equal(first.rank, 1);
+  assert.equal(room.winner, first.id);
+  assert.equal(room.complete, false);
+
+  assert.equal(applyMove(room, second, "right", 150), true);
+  assert.equal(applyMove(room, second, "right", 270), true);
+  assert.equal(second.timeMs, 120);
+  assert.equal(second.rank, 2);
+  assert.equal(room.complete, true);
 });
 
 test("deux clients peuvent créer et rejoindre le même salon", async (context) => {
