@@ -280,7 +280,6 @@ function roomMessage(room) {
     round: room.round,
     mazeScale: room.mazeScale,
     podium: room.podium,
-    ghost: room.bestRun,
     chat: room.chat.slice(),
   };
 }
@@ -301,7 +300,6 @@ function stateMessage(room) {
     round: room.round,
     mazeScale: room.mazeScale,
     podium: room.podium,
-    ghost: room.bestRun,
   };
 }
 
@@ -324,75 +322,16 @@ function canMove(maze, x, y, directionName) {
   return (maze.cells[y * maze.width + x] & direction.wall) === 0;
 }
 
-function remapGhostToMaze(maze, ghost) {
-  if (!ghost) return null;
-  const startKey = `${maze.start.x},${maze.start.y}`;
-  const exitKey = `${maze.exit.x},${maze.exit.y}`;
-  const queue = [{ ...maze.start }];
-  const parents = new Map([[startKey, null]]);
-
-  while (queue.length && !parents.has(exitKey)) {
-    const current = queue.shift();
-    for (const directionName of Object.keys(DIRECTIONS)) {
-      if (!canMove(maze, current.x, current.y, directionName)) continue;
-      const direction = DIRECTIONS[directionName];
-      const next = { x: current.x + direction.dx, y: current.y + direction.dy };
-      const nextKey = `${next.x},${next.y}`;
-      if (parents.has(nextKey)) continue;
-      parents.set(nextKey, current);
-      queue.push(next);
-    }
-  }
-
-  const positions = [];
-  let cursor = { ...maze.exit };
-  while (cursor) {
-    positions.push(cursor);
-    cursor = parents.get(`${cursor.x},${cursor.y}`) || null;
-  }
-  positions.reverse();
-  const denominator = Math.max(1, positions.length - 1);
-  const requestedTimeMs = Number(ghost.timeMs) || 0;
-  const timeMs = requestedTimeMs > 0 ? requestedTimeMs : Math.max(4000, denominator * 90);
-  return {
-    name: ghost.name,
-    color: ghost.color,
-    timeMs,
-    isDemo: Boolean(ghost.isDemo),
-    path: positions.map(({ x, y }, index) => ({
-      x,
-      y,
-      t: Math.round(timeMs * index / denominator),
-    })),
-  };
-}
-
-function createDemoGhost(maze) {
-  return remapGhostToMaze(maze, {
-    name: "Ghost Runner",
-    color: "#c7d8ff",
-    isDemo: true,
-  });
-}
-
 function recordRoundResults(room) {
   const results = [...room.players.values()]
     .filter((player) => player.finishedAt)
     .sort((first, second) => first.rank - second.rank);
-  const roundWinner = results[0];
-  if (roundWinner && (!room.bestRun || room.bestRun.isDemo || roundWinner.timeMs < room.bestRun.timeMs)) {
-    room.bestRun = {
-      name: roundWinner.name,
-      color: roundWinner.color,
-      timeMs: roundWinner.timeMs,
-      path: roundWinner.runPath,
-    };
-  }
   for (const player of results) {
     const standing = room.standings.get(player.id) || {
       id: player.id,
       name: player.name,
       color: player.color,
+      avatarUrl: player.avatarUrl || "",
       points: 0,
       wins: 0,
       races: 0,
@@ -400,6 +339,7 @@ function recordRoundResults(room) {
     };
     standing.name = player.name;
     standing.color = player.color;
+    standing.avatarUrl = player.avatarUrl || "";
     standing.points += RANK_POINTS[player.rank - 1] || 1;
     standing.wins += player.rank === 1 ? 1 : 0;
     standing.races += 1;
@@ -421,7 +361,15 @@ function recordRoundResults(room) {
     .sort((first, second) =>
       second.points - first.points || second.wins - first.wins || first.totalTimeMs - second.totalTimeMs)
     .slice(0, 3)
-    .map(({ id, name, color, points, wins, races }) => ({ id, name, color, points, wins, races }));
+    .map(({ id, name, color, avatarUrl, points, wins, races }) => ({
+      id,
+      name,
+      color,
+      avatarUrl,
+      points,
+      wins,
+      races,
+    }));
 }
 
 function updateRoomCompletion(room) {
@@ -491,8 +439,6 @@ function applyMove(room, player, directionName, now = Date.now()) {
   player.x += direction.dx;
   player.y += direction.dy;
   player.lastMoveAt = now;
-  if (!Array.isArray(player.runPath)) player.runPath = [{ x: room.maze.start.x, y: room.maze.start.y, t: 0 }];
-  player.runPath.push({ x: player.x, y: player.y, t: Math.max(0, now - room.startAt) });
   applyPowerUp(room, player, now);
   if (player.x === room.maze.exit.x && player.y === room.maze.exit.y) {
     player.finishedAt = now;
@@ -507,7 +453,6 @@ function applyMove(room, player, directionName, now = Date.now()) {
 
 function prepareRoomMaze(room, nextMaze) {
   room.maze = nextMaze;
-  room.bestRun = remapGhostToMaze(room.maze, room.bestRun);
   room.winner = "";
   room.complete = false;
   room.finishCount = 0;
@@ -527,7 +472,6 @@ function prepareRoomMaze(room, nextMaze) {
     player.confusedUntil = 0;
     player.frozenUntil = 0;
     player.shield = false;
-    player.runPath = [{ x: room.maze.start.x, y: room.maze.start.y, t: 0 }];
   }
 }
 
@@ -798,7 +742,6 @@ function createGameServer({
       frozenUntil: 0,
       shield: false,
       lastChatAt: 0,
-      runPath: [{ x: start.x, y: start.y, t: 0 }],
     };
     room.players.set(socket.id, player);
     socket.roomCode = room.code;
@@ -835,7 +778,6 @@ function createGameServer({
         standings: new Map(),
         history: [],
         podium: [],
-        bestRun: createDemoGhost(maze),
         chat: [],
       };
       rooms.set(code, room);
