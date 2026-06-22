@@ -11,6 +11,10 @@ const GAMEPAD_DEADZONE := 0.42
 const GHOST_LOOP_PAUSE_MS := 800
 
 var socket := WebSocketPeer.new()
+var auth_request: HTTPRequest
+var auth_request_action := ""
+var discord_user: Dictionary = {}
+var avatar_textures: Dictionary = {}
 var player_id := ""
 var host_id := ""
 var room_code := ""
@@ -38,6 +42,8 @@ var server_input: LineEdit
 var name_input: LineEdit
 var room_input: LineEdit
 var status_label: Label
+var discord_button: Button
+var discord_status_label: Label
 var create_button: Button
 var join_button: Button
 var copy_button: Button
@@ -81,6 +87,9 @@ var last_maze_origin := Vector2.ZERO
 var last_cell_size := 0.0
 var hovered_player_id := ""
 var finish_slow_timer := 0.0
+var power_down_flash_timer := 0.0
+var power_down_flash_color := Color.TRANSPARENT
+var active_power_downs: Dictionary = {}
 var direction_hint_until_ms := 0
 var last_countdown_value := ""
 var music_timer := 0.0
@@ -97,6 +106,7 @@ func _ready() -> void:
 	_setup_audio()
 	_build_interface()
 	server_input.text = _default_server_url()
+	_check_discord_session()
 	get_viewport().size_changed.connect(_on_viewport_resized)
 	queue_redraw()
 
@@ -118,9 +128,10 @@ func _build_interface() -> void:
 
 	panel = PanelContainer.new()
 	panel.set_anchor(SIDE_LEFT, 0.5)
+	panel.set_anchor(SIDE_TOP, 0.5)
 	panel.set_anchor(SIDE_RIGHT, 0.5)
-	panel.offset_top = 14
-	panel.custom_minimum_size.y = 158
+	panel.set_anchor(SIDE_BOTTOM, 0.5)
+	panel.custom_minimum_size.y = 220
 	var lobby_style := StyleBoxFlat.new()
 	lobby_style.bg_color = Color("0d1929")
 	lobby_style.border_color = Color(0.32, 0.79, 0.95, 0.42)
@@ -272,16 +283,42 @@ func _build_interface() -> void:
 	subtitle.add_theme_color_override("font_color", Color("8fa5bd"))
 	rows.add_child(subtitle)
 
+	var discord_row := HBoxContainer.new()
+	discord_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	discord_row.add_theme_constant_override("separation", 10)
+	rows.add_child(discord_row)
+	discord_button = Button.new()
+	discord_button.text = "Connexion Discord…"
+	discord_button.disabled = true
+	discord_button.custom_minimum_size = Vector2(210, 40)
+	discord_button.pressed.connect(_on_discord_pressed)
+	_apply_button_style(discord_button, Color("5865f2"), Color("6875f5"), Color.WHITE)
+	discord_row.add_child(discord_button)
+	discord_status_label = Label.new()
+	discord_status_label.text = "Vérification du compte…"
+	discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
+	discord_row.add_child(discord_status_label)
+
+	auth_request = HTTPRequest.new()
+	auth_request.timeout = 8.0
+	auth_request.request_completed.connect(_on_auth_request_completed)
+	add_child(auth_request)
+
+	var name_row := HBoxContainer.new()
+	name_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	rows.add_child(name_row)
+	name_input = LineEdit.new()
+	name_input.placeholder_text = "Votre pseudo"
+	name_input.max_length = 16
+	name_input.custom_minimum_size = Vector2(280, 42)
+	name_input.text_changed.connect(_on_name_text_changed)
+	name_row.add_child(name_input)
+
 	var play_row := HFlowContainer.new()
 	play_row.alignment = FlowContainer.ALIGNMENT_CENTER
 	play_row.add_theme_constant_override("h_separation", 9)
 	play_row.add_theme_constant_override("v_separation", 7)
 	rows.add_child(play_row)
-	name_input = LineEdit.new()
-	name_input.placeholder_text = "Votre pseudo"
-	name_input.max_length = 16
-	name_input.custom_minimum_size = Vector2(175, 42)
-	play_row.add_child(name_input)
 	create_button = Button.new()
 	create_button.text = "Créer la course"
 	create_button.custom_minimum_size = Vector2(150, 42)
@@ -484,10 +521,13 @@ func _build_interface() -> void:
 func _layout_lobby_panel() -> void:
 	if not panel:
 		return
-	var panel_width := minf(820.0, get_viewport_rect().size.x - 24.0)
+	var viewport_width := get_viewport_rect().size.x
+	var panel_width := minf(680.0, viewport_width - 24.0)
+	var panel_height := 330.0 if panel_width < 520.0 else 278.0
 	panel.offset_left = -panel_width * 0.5
 	panel.offset_right = panel_width * 0.5
-	panel.offset_bottom = 172
+	panel.offset_top = -panel_height * 0.5
+	panel.offset_bottom = panel_height * 0.5
 
 
 func _apply_button_style(
@@ -566,6 +606,161 @@ func _default_server_url() -> String:
 		if value is String:
 			return value
 	return LOCAL_SERVER_URL
+
+
+func _http_url(endpoint: String) -> String:
+	if OS.has_feature("web"):
+		var origin = JavaScriptBridge.eval("window.location.origin")
+		if origin is String:
+			return str(origin) + endpoint
+	var base := server_input.text.strip_edges()
+	if base.is_empty():
+		base = LOCAL_SERVER_URL
+	if base.begins_with("wss://"):
+		base = "https://" + base.substr(6)
+	elif base.begins_with("ws://"):
+		base = "http://" + base.substr(5)
+	if base.ends_with("/ws"):
+		base = base.left(base.length() - 3)
+	while base.ends_with("/"):
+		base = base.left(base.length() - 1)
+	return base + endpoint
+
+
+func _check_discord_session() -> void:
+	if not OS.has_feature("web"):
+		discord_button.text = "Discord : version Web"
+		discord_button.disabled = true
+		discord_status_label.text = "Connexion disponible dans l’export Web"
+		return
+	auth_request_action = "check"
+	var error := auth_request.request(_http_url("/api/auth/me"))
+	if error != OK:
+		_show_discord_unavailable()
+
+
+func _on_discord_pressed() -> void:
+	if not discord_user.is_empty():
+		auth_request_action = "logout"
+		discord_button.disabled = true
+		var error := auth_request.request(
+			_http_url("/api/auth/logout"),
+			PackedStringArray(),
+			HTTPClient.METHOD_POST
+		)
+		if error != OK:
+			discord_button.disabled = false
+			discord_status_label.text = "Déconnexion impossible."
+		return
+	discord_button.disabled = true
+	discord_status_label.text = "Ouverture de Discord…"
+	JavaScriptBridge.eval("window.location.assign('/auth/discord')")
+
+
+func _on_auth_request_completed(
+	_result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+	if response_code != 200 or not payload is Dictionary:
+		_show_discord_unavailable()
+		return
+	var enabled := bool(payload.get("enabled", false))
+	if bool(payload.get("authenticated", false)):
+		var user = payload.get("user", {})
+		discord_user = user if user is Dictionary else {}
+	else:
+		discord_user = {}
+	_refresh_discord_controls(enabled)
+	if auth_request_action == "logout":
+		status_label.text = "Compte Discord déconnecté."
+	auth_request_action = ""
+
+
+func _refresh_discord_controls(enabled: bool) -> void:
+	if not discord_user.is_empty():
+		var display_name := str(discord_user.get("displayName", "Joueur Discord"))
+		discord_button.text = "Se déconnecter"
+		discord_button.disabled = false
+		discord_status_label.text = "Connecté : %s" % display_name
+		discord_status_label.add_theme_color_override("font_color", Color("79e36a"))
+		name_input.text = display_name.left(16)
+		name_input.editable = false
+		name_input.tooltip_text = "Le pseudo Discord est utilisé pendant la connexion."
+		return
+	name_input.editable = true
+	name_input.tooltip_text = ""
+	discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
+	if enabled:
+		discord_button.text = "Se connecter avec Discord"
+		discord_button.disabled = false
+		discord_status_label.text = "Utiliser votre photo de profil"
+	else:
+		discord_button.text = "Discord non configuré"
+		discord_button.disabled = true
+		discord_status_label.text = "Configuration serveur requise"
+
+
+func _show_discord_unavailable() -> void:
+	discord_user = {}
+	discord_button.text = "Discord indisponible"
+	discord_button.disabled = true
+	discord_status_label.text = "Le serveur d’authentification ne répond pas"
+	discord_status_label.add_theme_color_override("font_color", Color("ff8fa3"))
+
+
+func _ensure_avatar_loaded(player: Dictionary) -> void:
+	var avatar_url := str(player.get("avatarUrl", ""))
+	if (
+		avatar_url.is_empty()
+		or not avatar_url.begins_with("/api/discord/avatar/")
+		or avatar_textures.has(avatar_url)
+	):
+		return
+	avatar_textures[avatar_url] = null
+	var request := HTTPRequest.new()
+	request.timeout = 10.0
+	request.request_completed.connect(
+		_on_avatar_request_completed.bind(avatar_url, request)
+	)
+	add_child(request)
+	var error := request.request(_http_url(avatar_url))
+	if error != OK:
+		avatar_textures.erase(avatar_url)
+		request.queue_free()
+
+
+func _on_avatar_request_completed(
+	_result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray,
+	avatar_url: String,
+	request: HTTPRequest
+) -> void:
+	if response_code == 200:
+		var image := Image.new()
+		var error := image.load_png_from_buffer(body)
+		if error == OK:
+			image.resize(96, 96, Image.INTERPOLATE_LANCZOS)
+			image.convert(Image.FORMAT_RGBA8)
+			var center := Vector2(47.5, 47.5)
+			var radius := 47.5
+			for y in range(96):
+				for x in range(96):
+					var pixel := image.get_pixel(x, y)
+					var edge := radius - Vector2(x, y).distance_to(center)
+					pixel.a *= clampf(edge + 0.5, 0.0, 1.0)
+					image.set_pixel(x, y, pixel)
+			avatar_textures[avatar_url] = ImageTexture.create_from_image(image)
+			queue_redraw()
+		else:
+			avatar_textures.erase(avatar_url)
+	else:
+		avatar_textures.erase(avatar_url)
+	request.queue_free()
 
 
 func _load_settings() -> void:
@@ -991,6 +1186,7 @@ func _set_players(next_players: Array) -> void:
 	var newly_finished_players: Array = []
 	for player in players:
 		var id := str(player.get("id", ""))
+		_ensure_avatar_loaded(player)
 		var target := Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
 		present_players[id] = true
 		if not visual_positions.has(id):
@@ -1173,6 +1369,18 @@ func _start_celebration(dominant_color: Color = Color.TRANSPARENT) -> void:
 
 func _update_effects(delta: float) -> void:
 	finish_slow_timer = maxf(0.0, finish_slow_timer - delta)
+	power_down_flash_timer = maxf(0.0, power_down_flash_timer - delta)
+	var power_down_colors := {
+		"slow": Color("9b64e8"),
+		"confused": Color("ff5ca8"),
+		"frozen": Color("8fe7ff"),
+	}
+	for effect in power_down_colors:
+		var is_active := _local_effect_active(effect)
+		if is_active and not bool(active_power_downs.get(effect, false)):
+			power_down_flash_timer = 0.46
+			power_down_flash_color = power_down_colors[effect]
+		active_power_downs[effect] = is_active
 	var visual_delta := delta * (0.28 if finish_slow_timer > 0.0 else 1.0)
 	animation_time += visual_delta
 	wall_hit_timer = maxf(0.0, wall_hit_timer - delta)
@@ -1524,7 +1732,179 @@ func _draw() -> void:
 	_draw_maze_walls(origin, cell_size, width, height)
 	_draw_celebration(origin, cell_size)
 	_draw_players(origin, cell_size)
+	_draw_power_down_screen_fx(viewport_size)
 	_draw_countdown_fx(viewport_size)
+
+
+func _draw_power_down_screen_fx(viewport_size: Vector2) -> void:
+	if _local_effect_active("slow"):
+		_draw_slow_screen_fx(viewport_size, _power_down_fade("slow"))
+	if _local_effect_active("confused"):
+		_draw_confused_screen_fx(viewport_size, _power_down_fade("confused"))
+	if _local_effect_active("frozen"):
+		_draw_frozen_screen_fx(viewport_size, _power_down_fade("frozen"))
+	if power_down_flash_timer > 0.0:
+		var flash := clampf(power_down_flash_timer / 0.46, 0.0, 1.0)
+		draw_rect(
+			Rect2(Vector2.ZERO, viewport_size),
+			Color(power_down_flash_color, flash * 0.11),
+			true
+		)
+		draw_arc(
+			viewport_size * 0.5,
+			lerpf(28.0, minf(viewport_size.x, viewport_size.y) * 0.42, 1.0 - flash),
+			0.0,
+			TAU,
+			64,
+			Color(power_down_flash_color, flash * 0.58),
+			lerpf(7.0, 2.0, 1.0 - flash),
+			true
+		)
+
+
+func _power_down_fade(effect_name: String) -> float:
+	return clampf(_local_effect_remaining(effect_name) * 2.5, 0.0, 1.0)
+
+
+func _draw_edge_vignette(viewport_size: Vector2, color: Color, strength: float) -> void:
+	var edge_size := clampf(minf(viewport_size.x, viewport_size.y) * 0.13, 52.0, 112.0)
+	for layer in range(7):
+		var progress := float(layer) / 6.0
+		var depth := lerpf(edge_size, 5.0, progress)
+		var alpha := strength * lerpf(0.015, 0.055, progress)
+		var layer_color := Color(color, alpha)
+		draw_rect(Rect2(0.0, 0.0, viewport_size.x, depth), layer_color, true)
+		draw_rect(
+			Rect2(0.0, viewport_size.y - depth, viewport_size.x, depth),
+			layer_color,
+			true
+		)
+		draw_rect(Rect2(0.0, 0.0, depth, viewport_size.y), layer_color, true)
+		draw_rect(
+			Rect2(viewport_size.x - depth, 0.0, depth, viewport_size.y),
+			layer_color,
+			true
+		)
+
+
+func _draw_slow_screen_fx(viewport_size: Vector2, fade: float) -> void:
+	var color := Color("9b64e8")
+	var pulse := 0.72 + (sin(animation_time * 2.0) + 1.0) * 0.14
+	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(color, 0.025 * fade), true)
+	_draw_edge_vignette(viewport_size, color, pulse * fade)
+	for side in range(2):
+		var direction := 1.0 if side == 0 else -1.0
+		var edge_x := 0.0 if side == 0 else viewport_size.x
+		for streak in range(5):
+			var y := fmod(animation_time * 21.0 + streak * viewport_size.y / 5.0, viewport_size.y)
+			var length := 54.0 + streak * 11.0
+			var wave := sin(animation_time * 1.7 + streak * 1.3) * 9.0
+			draw_line(
+				Vector2(edge_x, y),
+				Vector2(edge_x + direction * length, y + wave),
+				Color(color, (0.16 + streak * 0.018) * fade),
+				3.0,
+				true
+			)
+
+
+func _draw_confused_screen_fx(viewport_size: Vector2, fade: float) -> void:
+	var cyan := Color("45d9ff")
+	var magenta := Color("ff5ca8")
+	var wobble := sin(animation_time * 6.0) * 6.0
+	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(magenta, 0.018 * fade), true)
+	draw_rect(
+		Rect2(Vector2(8.0 + wobble, 9.0), viewport_size - Vector2(18.0, 18.0)),
+		Color(cyan, 0.42 * fade),
+		false,
+		2.0,
+		true
+	)
+	draw_rect(
+		Rect2(Vector2(10.0 - wobble, 11.0), viewport_size - Vector2(18.0, 18.0)),
+		Color(magenta, 0.38 * fade),
+		false,
+		2.0,
+		true
+	)
+	var corners := [
+		Vector2.ZERO,
+		Vector2(viewport_size.x, 0.0),
+		viewport_size,
+		Vector2(0.0, viewport_size.y),
+	]
+	for index in range(corners.size()):
+		var start := index * PI * 0.5 + animation_time * 0.75
+		draw_arc(
+			corners[index],
+			72.0 + sin(animation_time * 3.0 + index) * 8.0,
+			start,
+			start + PI * 0.72,
+			20,
+			Color(cyan if index % 2 == 0 else magenta, 0.48 * fade),
+			4.0,
+			true
+		)
+
+
+func _draw_frozen_screen_fx(viewport_size: Vector2, fade: float) -> void:
+	var ice := Color("8fe7ff")
+	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(ice, 0.04 * fade), true)
+	_draw_edge_vignette(viewport_size, ice, 1.15 * fade)
+	var corner_data := [
+		[Vector2.ZERO, Vector2(1.0, 1.0)],
+		[Vector2(viewport_size.x, 0.0), Vector2(-1.0, 1.0)],
+		[viewport_size, Vector2(-1.0, -1.0)],
+		[Vector2(0.0, viewport_size.y), Vector2(1.0, -1.0)],
+	]
+	for index in range(corner_data.size()):
+		var corner: Vector2 = corner_data[index][0]
+		var direction: Vector2 = corner_data[index][1]
+		var bend := Vector2(direction.x * (88.0 + index * 8.0), direction.y * 42.0)
+		var tip := corner + bend
+		draw_line(corner, tip, Color(ice, 0.58 * fade), 3.0, true)
+		draw_line(
+			tip,
+			tip + Vector2(direction.x * 34.0, direction.y * 45.0),
+			Color(ice, 0.38 * fade),
+			2.0,
+			true
+		)
+		draw_line(
+			tip,
+			tip + Vector2(direction.x * 48.0, -direction.y * 8.0),
+			Color(ice, 0.32 * fade),
+			2.0,
+			true
+		)
+	for flake in range(16):
+		var side := flake % 4
+		var along := fmod(flake * 79.0 + animation_time * 13.0, 620.0) / 620.0
+		var inset := 18.0 + float((flake * 17) % 34)
+		var center := Vector2.ZERO
+		if side == 0:
+			center = Vector2(along * viewport_size.x, inset)
+		elif side == 1:
+			center = Vector2(viewport_size.x - inset, along * viewport_size.y)
+		elif side == 2:
+			center = Vector2((1.0 - along) * viewport_size.x, viewport_size.y - inset)
+		else:
+			center = Vector2(inset, (1.0 - along) * viewport_size.y)
+		var radius := 2.0 + float(flake % 3)
+		draw_line(
+			center - Vector2(radius, 0.0),
+			center + Vector2(radius, 0.0),
+			Color(ice, 0.45 * fade),
+			1.4,
+			true
+		)
+		draw_line(
+			center - Vector2(0.0, radius),
+			center + Vector2(0.0, radius),
+			Color(ice, 0.45 * fade),
+			1.4,
+			true
+		)
 
 
 func _draw_background(viewport_size: Vector2) -> void:
@@ -1540,7 +1920,11 @@ func _draw_background(viewport_size: Vector2) -> void:
 
 
 func _draw_idle_mark(viewport_size: Vector2) -> void:
-	var center := Vector2(viewport_size.x * 0.5, maxf(360.0, viewport_size.y * 0.58))
+	var panel_bottom := panel.position.y + panel.size.y if panel else viewport_size.y * 0.5
+	var center := Vector2(
+		viewport_size.x * 0.5,
+		minf(viewport_size.y - 90.0, panel_bottom + 78.0)
+	)
 	var pulse := 1.0 + sin(animation_time * 2.8) * 0.09
 	draw_circle(center, 24.0 * pulse, Color(0.18, 0.75, 0.95, 0.08))
 	draw_circle(center, 13.0 * pulse, Color("83e8ff"))
@@ -1822,12 +2206,22 @@ func _draw_players(origin: Vector2, cell_size: float) -> void:
 		draw_circle(center, radius + 8.0, glow)
 		draw_set_transform(center, body_angle, body_scale)
 		draw_circle(Vector2(0, 2), radius + 3.0, Color(0.01, 0.03, 0.06, 0.85))
-		draw_circle(Vector2.ZERO, radius, color)
-		draw_circle(
-			Vector2(-radius * 0.28, -radius * 0.28),
-			radius * 0.22,
-			Color(1, 1, 1, 0.55)
-		)
+		var avatar_url := str(player.get("avatarUrl", ""))
+		var avatar_texture = avatar_textures.get(avatar_url)
+		if avatar_texture is Texture2D:
+			draw_circle(Vector2.ZERO, radius + 1.5, color)
+			draw_texture_rect(
+				avatar_texture,
+				Rect2(Vector2(-radius, -radius), Vector2(radius * 2.0, radius * 2.0)),
+				false
+			)
+		else:
+			draw_circle(Vector2.ZERO, radius, color)
+			draw_circle(
+				Vector2(-radius * 0.28, -radius * 0.28),
+				radius * 0.22,
+				Color(1, 1, 1, 0.55)
+			)
 		if _effect_active(effects, "frozen"):
 			draw_circle(Vector2.ZERO, radius * 0.82, Color(0.65, 0.94, 1.0, 0.55))
 		draw_set_transform(Vector2.ZERO)
@@ -1897,22 +2291,48 @@ func _draw_countdown_fx(viewport_size: Vector2) -> void:
 
 
 func _on_create_pressed() -> void:
+	var player_name := _required_player_name()
+	if player_name.is_empty():
+		return
 	_play_tone(330.0, 0.08, 0.06)
-	_connect_and_send({"type": "create", "name": _player_name()})
+	_connect_and_send({"type": "create", "name": player_name})
 
 
 func _on_join_pressed() -> void:
+	var player_name := _required_player_name()
+	if player_name.is_empty():
+		return
 	var code := room_input.text.strip_edges().to_upper()
 	if code.length() != 4:
 		status_label.text = "Le code du salon doit contenir 4 caractères."
 		return
 	_play_tone(392.0, 0.08, 0.06)
-	_connect_and_send({"type": "join", "room": code, "name": _player_name()})
+	_connect_and_send({"type": "join", "room": code, "name": player_name})
 
 
 func _player_name() -> String:
-	var value := name_input.text.strip_edges()
-	return value if not value.is_empty() else "Joueur"
+	return name_input.text.strip_edges()
+
+
+func _required_player_name() -> String:
+	var value := _player_name()
+	if not value.is_empty():
+		return value
+	status_label.text = "Entrez votre pseudo pour continuer."
+	name_input.placeholder_text = "Pseudo requis"
+	name_input.add_theme_color_override("font_placeholder_color", Color("ff8fa3"))
+	name_input.grab_focus()
+	_play_tone(125.0, 0.09, 0.08, "noise")
+	return ""
+
+
+func _on_name_text_changed(value: String) -> void:
+	if value.strip_edges().is_empty():
+		return
+	name_input.placeholder_text = "Votre pseudo"
+	name_input.remove_theme_color_override("font_placeholder_color")
+	if status_label.text == "Entrez votre pseudo pour continuer.":
+		status_label.text = "Prêt pour une nouvelle course."
 
 
 func _on_room_text_changed(value: String) -> void:
