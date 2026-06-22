@@ -39,6 +39,71 @@ const DIRECTIONS = {
   left: { dx: -1, dy: 0, wall: WALL_LEFT },
 };
 
+const AUTH_COOKIE = "maze_discord_session";
+const OAUTH_STATE_COOKIE = "maze_discord_oauth_state";
+const AUTH_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function parseCookies(header = "") {
+  return String(header).split(";").reduce((cookies, part) => {
+    const separator = part.indexOf("=");
+    if (separator < 0) return cookies;
+    const name = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    if (name) {
+      try {
+        cookies[name] = decodeURIComponent(value);
+      } catch {
+        cookies[name] = value;
+      }
+    }
+    return cookies;
+  }, {});
+}
+
+function signValue(value, secret) {
+  return crypto.createHmac("sha256", secret).update(value).digest("base64url");
+}
+
+function createAuthSession(user, secret, now = Date.now()) {
+  if (!secret) throw new Error("Un secret de session est requis.");
+  const payload = Buffer.from(JSON.stringify({
+    id: String(user.id),
+    username: String(user.username || "Joueur Discord").slice(0, 32),
+    displayName: String(user.global_name || user.displayName || user.username || "Joueur Discord").slice(0, 32),
+    avatar: typeof user.avatar === "string" ? user.avatar : "",
+    defaultAvatar: String(user.avatar ? "" : (user.default_avatar ?? user.defaultAvatar ?? "0")),
+    expiresAt: now + AUTH_SESSION_MAX_AGE_MS,
+  })).toString("base64url");
+  return `${payload}.${signValue(payload, secret)}`;
+}
+
+function readAuthSession(value, secret, now = Date.now()) {
+  if (!value || !secret) return null;
+  const [payload, signature, extra] = String(value).split(".");
+  if (!payload || !signature || extra) return null;
+  const expected = signValue(payload, secret);
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+  try {
+    const user = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!/^\d+$/.test(user.id) || Number(user.expiresAt) <= now) return null;
+    if (user.avatar && !/^[a-zA-Z0-9_]+$/.test(user.avatar)) return null;
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+function discordAvatarUrl(user) {
+  if (!user?.id) return "";
+  if (user.avatar && /^[a-zA-Z0-9_]+$/.test(user.avatar)) {
+    return `/api/discord/avatar/${user.id}/${user.avatar}.png`;
+  }
+  const index = /^[0-5]$/.test(String(user.defaultAvatar)) ? String(user.defaultAvatar) : "0";
+  return `/api/discord/avatar/default/${index}.png`;
+}
+
 function normalizeMazeScale(value) {
   const scale = Math.round(Number(value) || DEFAULT_MAZE_SCALE);
   return Math.max(MIN_MAZE_SCALE, Math.min(MAX_MAZE_SCALE, scale));
@@ -180,6 +245,8 @@ function publicPlayer(player, now) {
     id: player.id,
     name: player.name,
     color: player.color,
+    avatarUrl: player.avatarUrl || "",
+    discord: Boolean(player.discordUserId),
     x: player.x,
     y: player.y,
     finished: Boolean(player.finishedAt),
@@ -469,11 +536,176 @@ function resetRoom(room, nextMaze = null) {
   room.round = (room.round || 0) + 1;
 }
 
-function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {}) {
+function createGameServer({
+  webRoot = path.resolve(__dirname, "..", "web"),
+  discordConfig = {},
+  fetchImpl = globalThis.fetch,
+} = {}) {
   const rooms = new Map();
 
-  const httpServer = http.createServer((request, response) => {
+  const auth = {
+    clientId: discordConfig.clientId ?? process.env.DISCORD_CLIENT_ID ?? "",
+    clientSecret: discordConfig.clientSecret ?? process.env.DISCORD_CLIENT_SECRET ?? "",
+    redirectUri: discordConfig.redirectUri ?? process.env.DISCORD_REDIRECT_URI ?? "",
+    sessionSecret: discordConfig.sessionSecret ?? process.env.AUTH_SESSION_SECRET ?? process.env.DISCORD_CLIENT_SECRET ?? "",
+  };
+  auth.enabled = Boolean(auth.clientId && auth.clientSecret && auth.redirectUri && auth.sessionSecret);
+
+  function securityHeaders(extra = {}) {
+    return {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      ...extra,
+    };
+  }
+
+  function sendJson(response, status, payload, extraHeaders = {}) {
+    response.writeHead(status, securityHeaders({
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      ...extraHeaders,
+    }));
+    response.end(JSON.stringify(payload));
+  }
+
+  function redirect(response, location, cookies = []) {
+    const headers = securityHeaders({ Location: location, "Cache-Control": "no-store" });
+    if (cookies.length) headers["Set-Cookie"] = cookies;
+    response.writeHead(302, headers);
+    response.end();
+  }
+
+  function secureCookie(request) {
+    return request.headers["x-forwarded-proto"] === "https" || auth.redirectUri.startsWith("https://");
+  }
+
+  function sessionUser(request) {
+    return readAuthSession(parseCookies(request.headers.cookie)[AUTH_COOKIE], auth.sessionSecret);
+  }
+
+  async function proxyDiscordAvatar(requestUrl, response) {
+    const custom = requestUrl.pathname.match(/^\/api\/discord\/avatar\/(\d+)\/([a-zA-Z0-9_]+)\.png$/);
+    const fallback = requestUrl.pathname.match(/^\/api\/discord\/avatar\/default\/([0-5])\.png$/);
+    if (!custom && !fallback) return false;
+    if (typeof fetchImpl !== "function") {
+      response.writeHead(503).end("Avatar indisponible");
+      return true;
+    }
+    const cdnUrl = custom
+      ? `https://cdn.discordapp.com/avatars/${custom[1]}/${custom[2]}.png?size=128`
+      : `https://cdn.discordapp.com/embed/avatars/${fallback[1]}.png`;
+    try {
+      const avatarResponse = await fetchImpl(cdnUrl, { headers: { "User-Agent": "A-Maze-Inc/1.0" } });
+      if (!avatarResponse.ok) {
+        response.writeHead(avatarResponse.status === 404 ? 404 : 502).end("Avatar indisponible");
+        return true;
+      }
+      response.writeHead(200, securityHeaders({
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=86400, immutable",
+        "Cross-Origin-Resource-Policy": "same-origin",
+      }));
+      response.end(Buffer.from(await avatarResponse.arrayBuffer()));
+    } catch {
+      response.writeHead(502).end("Avatar indisponible");
+    }
+    return true;
+  }
+
+  async function handleHttpRequest(request, response) {
     const requestUrl = new URL(request.url, "http://localhost");
+
+    if (requestUrl.pathname === "/api/auth/me") {
+      const user = sessionUser(request);
+      sendJson(response, 200, user ? {
+        authenticated: true,
+        enabled: auth.enabled,
+        user: {
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName,
+          avatarUrl: discordAvatarUrl(user),
+        },
+      } : { authenticated: false, enabled: auth.enabled });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/auth/logout" && request.method === "POST") {
+      const secure = secureCookie(request) ? "; Secure" : "";
+      sendJson(response, 200, { authenticated: false, enabled: auth.enabled }, {
+        "Set-Cookie": `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === "/auth/discord") {
+      if (!auth.enabled) {
+        sendJson(response, 503, { error: "La connexion Discord n'est pas configurée sur ce serveur." });
+        return;
+      }
+      const state = crypto.randomBytes(24).toString("base64url");
+      const secure = secureCookie(request) ? "; Secure" : "";
+      const authorizeUrl = new URL("https://discord.com/oauth2/authorize");
+      authorizeUrl.search = new URLSearchParams({
+        client_id: auth.clientId,
+        response_type: "code",
+        redirect_uri: auth.redirectUri,
+        scope: "identify",
+        state,
+      }).toString();
+      redirect(response, authorizeUrl.toString(), [
+        `${OAUTH_STATE_COOKIE}=${state}; Path=/auth/discord/callback; HttpOnly; SameSite=Lax; Max-Age=600${secure}`,
+      ]);
+      return;
+    }
+
+    if (requestUrl.pathname === "/auth/discord/callback") {
+      const cookies = parseCookies(request.headers.cookie);
+      const state = requestUrl.searchParams.get("state") || "";
+      const expectedState = cookies[OAUTH_STATE_COOKIE] || "";
+      const code = requestUrl.searchParams.get("code") || "";
+      const stateMatches = state.length === expectedState.length
+        && state.length > 0
+        && crypto.timingSafeEqual(Buffer.from(state), Buffer.from(expectedState));
+      const secure = secureCookie(request) ? "; Secure" : "";
+      const clearState = `${OAUTH_STATE_COOKIE}=; Path=/auth/discord/callback; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
+      if (!auth.enabled || !code || !stateMatches || typeof fetchImpl !== "function") {
+        redirect(response, "/?discord=error", [clearState]);
+        return;
+      }
+      try {
+        const tokenResponse = await fetchImpl("https://discord.com/api/v10/oauth2/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: auth.clientId,
+            client_secret: auth.clientSecret,
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: auth.redirectUri,
+          }),
+        });
+        if (!tokenResponse.ok) throw new Error("Échange OAuth refusé");
+        const token = await tokenResponse.json();
+        const userResponse = await fetchImpl("https://discord.com/api/v10/users/@me", {
+          headers: { Authorization: `Bearer ${token.access_token}` },
+        });
+        if (!userResponse.ok) throw new Error("Profil Discord indisponible");
+        const user = await userResponse.json();
+        if (!/^\d+$/.test(String(user.id))) throw new Error("Profil Discord invalide");
+        const session = createAuthSession(user, auth.sessionSecret);
+        redirect(response, "/?discord=connected", [
+          clearState,
+          `${AUTH_COOKIE}=${encodeURIComponent(session)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(AUTH_SESSION_MAX_AGE_MS / 1000)}${secure}`,
+        ]);
+      } catch {
+        redirect(response, "/?discord=error", [clearState]);
+      }
+      return;
+    }
+
+    if (await proxyDiscordAvatar(requestUrl, response)) return;
+
     const relativePath = requestUrl.pathname === "/" ? "index.html" : requestUrl.pathname.slice(1);
     const normalizedPath = path.normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
     const filePath = path.resolve(webRoot, normalizedPath);
@@ -496,12 +728,15 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
         ".svg": "image/svg+xml",
         ".ico": "image/x-icon",
       }[path.extname(filePath)] || "application/octet-stream";
-      response.writeHead(200, {
-        "Content-Type": mime,
-        "Cross-Origin-Opener-Policy": "same-origin",
-        "Cross-Origin-Embedder-Policy": "require-corp",
-      });
+      response.writeHead(200, securityHeaders({ "Content-Type": mime }));
       response.end(data);
+    });
+  }
+
+  const httpServer = http.createServer((request, response) => {
+    handleHttpRequest(request, response).catch(() => {
+      if (!response.headersSent) sendJson(response, 500, { error: "Erreur interne du serveur." });
+      else response.end();
     });
   });
 
@@ -533,11 +768,16 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
 
   function addPlayer(room, socket, requestedName) {
     const start = room.maze.start;
+    const discordUser = socket.discordUser;
     const player = {
       id: socket.id,
       socket,
-      name: sanitizeName(requestedName, room.players.size + 1),
+      name: discordUser
+        ? sanitizeName(discordUser.displayName || discordUser.username, room.players.size + 1)
+        : sanitizeName(requestedName, room.players.size + 1),
       color: COLORS[room.players.size % COLORS.length],
+      discordUserId: discordUser?.id || "",
+      avatarUrl: discordAvatarUrl(discordUser),
       x: start.x,
       y: start.y,
       lastMoveAt: 0,
@@ -684,9 +924,10 @@ function createGameServer({ webRoot = path.resolve(__dirname, "..", "web") } = {
     }
   }
 
-  webSocketServer.on("connection", (socket) => {
+  webSocketServer.on("connection", (socket, request) => {
     socket.id = crypto.randomUUID();
     socket.roomCode = null;
+    socket.discordUser = sessionUser(request);
     sockets.set(socket.id, socket);
     send(socket, { type: "hello", playerId: socket.id });
     socket.on("message", (raw) => handleMessage(socket, raw));
@@ -734,5 +975,8 @@ module.exports = {
   sanitizeChatText,
   applyMove,
   resetRoom,
+  createAuthSession,
+  readAuthSession,
+  discordAvatarUrl,
   createGameServer,
 };

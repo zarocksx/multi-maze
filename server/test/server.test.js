@@ -15,6 +15,9 @@ const {
   sanitizeChatText,
   applyMove,
   resetRoom,
+  createAuthSession,
+  readAuthSession,
+  discordAvatarUrl,
   createGameServer,
 } = require("../server");
 
@@ -32,9 +35,9 @@ function waitForMessage(socket, expectedType) {
   });
 }
 
-function connect(url) {
+function connect(url, options = {}) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(url, options);
     // Le serveur envoie `hello` immédiatement : on installe l’écouteur avant
     // l’événement open pour ne pas perdre ce premier paquet très rapide.
     const hello = waitForMessage(socket, "hello");
@@ -42,6 +45,101 @@ function connect(url) {
     socket.once("error", reject);
   });
 }
+
+test("les sessions Discord sont signées, expirent et produisent une URL d'avatar sûre", () => {
+  const now = 1_000_000;
+  const user = {
+    id: "123456789012345678",
+    username: "maze_user",
+    global_name: "Maze Runner",
+    avatar: "a_012345abcdef",
+  };
+  const session = createAuthSession(user, "test-secret", now);
+  assert.equal(readAuthSession(session, "test-secret", now).displayName, "Maze Runner");
+  assert.equal(readAuthSession(`${session}x`, "test-secret", now), null);
+  assert.equal(readAuthSession(session, "test-secret", now + 8 * 24 * 60 * 60 * 1000), null);
+  assert.equal(
+    discordAvatarUrl(readAuthSession(session, "test-secret", now)),
+    "/api/discord/avatar/123456789012345678/a_012345abcdef.png",
+  );
+});
+
+test("un WebSocket authentifié utilise le nom et l'avatar Discord", async (context) => {
+  const sessionSecret = "websocket-test-secret";
+  const session = createAuthSession({
+    id: "123456789012345678",
+    username: "discord_name",
+    global_name: "Profil Discord",
+    avatar: "abcdef123456",
+  }, sessionSecret);
+  const server = createGameServer({ discordConfig: { sessionSecret } });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const connection = await connect(`ws://127.0.0.1:${address.port}/ws`, {
+    headers: { Cookie: `maze_discord_session=${session}` },
+  });
+  context.after(() => connection.socket.terminate());
+  await connection.hello;
+  const roomMessage = waitForMessage(connection.socket, "room");
+  connection.socket.send(JSON.stringify({ type: "create", name: "Nom usurpé" }));
+  const room = await roomMessage;
+  assert.equal(room.players[0].name, "Profil Discord");
+  assert.equal(room.players[0].discord, true);
+  assert.equal(
+    room.players[0].avatarUrl,
+    "/api/discord/avatar/123456789012345678/abcdef123456.png",
+  );
+});
+
+test("le callback OAuth Discord crée une session HTTP utilisable par le jeu", async (context) => {
+  const discordConfig = {
+    clientId: "client-id",
+    clientSecret: "client-secret",
+    redirectUri: "http://127.0.0.1/auth/discord/callback",
+    sessionSecret: "oauth-test-secret",
+  };
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "discord-access-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      id: "987654321098765432",
+      username: "oauth_user",
+      global_name: "OAuth Runner",
+      avatar: null,
+      default_avatar: "3",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  const server = createGameServer({ discordConfig, fetchImpl });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  const login = await fetch(`${origin}/auth/discord`, { redirect: "manual" });
+  assert.equal(login.status, 302);
+  const authorizeUrl = new URL(login.headers.get("location"));
+  const state = authorizeUrl.searchParams.get("state");
+  const stateCookie = login.headers.get("set-cookie").split(";")[0];
+  const callback = await fetch(`${origin}/auth/discord/callback?code=test-code&state=${state}`, {
+    redirect: "manual",
+    headers: { Cookie: stateCookie },
+  });
+  assert.equal(callback.status, 302);
+  assert.equal(callback.headers.get("location"), "/?discord=connected");
+  const sessionMatch = callback.headers.get("set-cookie").match(/maze_discord_session=([^;,]+)/);
+  assert.ok(sessionMatch);
+
+  const profile = await fetch(`${origin}/api/auth/me`, {
+    headers: { Cookie: `maze_discord_session=${sessionMatch[1]}` },
+  });
+  const payload = await profile.json();
+  assert.equal(payload.authenticated, true);
+  assert.equal(payload.user.displayName, "OAuth Runner");
+  assert.equal(payload.user.avatarUrl, "/api/discord/avatar/default/3.png");
+});
 
 test("le labyrinthe par défaut mesure 38 par 26 cellules", () => {
   const maze = generateMaze();
