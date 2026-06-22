@@ -706,7 +706,15 @@ function createGameServer({
 
     if (await proxyDiscordAvatar(requestUrl, response)) return;
 
-    const relativePath = requestUrl.pathname === "/" ? "index.html" : requestUrl.pathname.slice(1);
+    const publicPages = {
+      "/privacy": "privacy.html",
+      "/privacy/": "privacy.html",
+      "/terms": "terms.html",
+      "/terms/": "terms.html",
+    };
+    const relativePath = requestUrl.pathname === "/"
+      ? "index.html"
+      : (publicPages[requestUrl.pathname] || requestUrl.pathname.slice(1));
     const normalizedPath = path.normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
     const filePath = path.resolve(webRoot, normalizedPath);
     if (!filePath.startsWith(path.resolve(webRoot))) {

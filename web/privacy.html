@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Politique de confidentialité — A Maze Inc.</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #07101b; color: #d6e2f0; line-height: 1.65; }
+    main { width: min(850px, calc(100% - 32px)); margin: 48px auto; padding: 36px; background: #0d1929; border: 1px solid #398ba5; border-radius: 16px; }
+    h1, h2 { color: #83e8ff; line-height: 1.25; }
+    h1 { margin-top: 0; font-size: clamp(2rem, 6vw, 3rem); }
+    h2 { margin-top: 2rem; font-size: 1.25rem; }
+    a { color: #83e8ff; }
+    .meta { color: #9fb3c8; }
+    nav { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
+    li + li { margin-top: 8px; }
+    @media (max-width: 600px) { main { margin: 16px auto; padding: 24px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <nav aria-label="Navigation">
+      <a href="/">Retour au jeu</a>
+      <a href="/terms">Conditions d’utilisation</a>
+    </nav>
+    <h1>Politique de confidentialité</h1>
+    <p class="meta">A Maze Inc. — Dernière mise à jour : 22 juin 2026</p>
+
+    <h2>1. Responsable du service</h2>
+    <p>A Maze Inc. est un projet indépendant exploité par le propriétaire du dépôt <a href="https://github.com/zarocksx/multi-maze">zarocksx/multi-maze</a>. Les demandes relatives à vos données peuvent être adressées via les tickets du dépôt.</p>
+
+    <h2>2. Données traitées</h2>
+    <p>Lorsque vous utilisez le jeu, le serveur peut traiter :</p>
+    <ul>
+      <li>votre pseudo choisi, votre position, vos résultats et les messages envoyés dans un salon ;</li>
+      <li>si vous vous connectez avec Discord : votre identifiant Discord, nom d’utilisateur, nom d’affichage et avatar ;</li>
+      <li>un cookie de session strictement nécessaire et un cookie temporaire de sécurité OAuth ;</li>
+      <li>les informations techniques nécessaires à la connexion, comme l’adresse IP, susceptibles d’être traitées par l’hébergeur.</li>
+    </ul>
+
+    <h2>3. Finalités</h2>
+    <p>Ces données servent uniquement à authentifier les joueurs qui le souhaitent, afficher leur identité dans le jeu, faire fonctionner les salons multijoueurs et le chat, prévenir les abus et assurer la sécurité technique du service.</p>
+
+    <h2>4. Conservation</h2>
+    <ul>
+      <li>La session Discord expire au plus tard après sept jours.</li>
+      <li>Le cookie de sécurité OAuth expire après dix minutes.</li>
+      <li>Les salons, scores et messages sont conservés en mémoire vive et supprimés lorsque le salon disparaît ou que le serveur redémarre.</li>
+      <li>Les avatars transitent par le serveur et peuvent être mis en cache pendant vingt-quatre heures.</li>
+    </ul>
+    <p>Le jeton d’accès Discord est utilisé brièvement pour lire le profil puis n’est pas enregistré. Le jeu ne possède pas de base de données persistante pour ces informations.</p>
+
+    <h2>5. Destinataires et services tiers</h2>
+    <p>Les données ne sont ni vendues, ni utilisées pour de la publicité ou du profilage. Le fonctionnement du service implique <a href="https://discord.com/privacy">Discord</a> pour l’authentification et les avatars, ainsi que <a href="https://render.com/privacy">Render</a> pour l’hébergement. Ces prestataires appliquent leurs propres politiques de confidentialité.</p>
+
+    <h2>6. Cookies</h2>
+    <p>Le service n’utilise aucun cookie publicitaire ou analytique. Les cookies présents sont strictement nécessaires à la connexion Discord et à la protection du flux OAuth.</p>
+
+    <h2>7. Vos droits</h2>
+    <p>Selon la législation applicable, vous pouvez demander l’accès, la rectification, l’effacement ou la limitation du traitement de vos données. Vous pouvez aussi vous déconnecter de Discord depuis le jeu pour supprimer le cookie de session.</p>
+
+    <h2>8. Contact</h2>
+    <p>Pour exercer un droit ou poser une question, ouvrez un ticket sur la page <a href="https://github.com/zarocksx/multi-maze/issues">Issues GitHub</a> sans y publier d’information sensible.</p>
+
+    <h2>9. Modifications</h2>
+    <p>Cette politique peut être mise à jour si le fonctionnement ou les prestataires du jeu changent. La date de révision est indiquée en haut de la page.</p>
+  </main>
+</body>
+</html>

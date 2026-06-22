@@ -141,6 +141,24 @@ test("le callback OAuth Discord crée une session HTTP utilisable par le jeu", a
   assert.equal(payload.user.avatarUrl, "/api/discord/avatar/default/3.png");
 });
 
+test("les pages légales sont accessibles avec des URLs sans extension", async (context) => {
+  const server = createGameServer();
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  const [terms, privacy] = await Promise.all([
+    fetch(`${origin}/terms`),
+    fetch(`${origin}/privacy`),
+  ]);
+  assert.equal(terms.status, 200);
+  assert.equal(privacy.status, 200);
+  assert.match(terms.headers.get("content-type"), /^text\/html/);
+  assert.match(privacy.headers.get("content-type"), /^text\/html/);
+  assert.match(await terms.text(), /Conditions d’utilisation/);
+  assert.match(await privacy.text(), /Politique de confidentialité/);
+});
+
 test("le labyrinthe par défaut mesure 38 par 26 cellules", () => {
   const maze = generateMaze();
   assert.equal(maze.width, 38);
