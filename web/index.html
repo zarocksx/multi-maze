@@ -296,7 +296,6 @@ async function refreshMazeDiscordSession() {
 		return;
 	}
 	try {
-		const response = await fetch('/api/auth/me', {
 		const response = await fetch(mazeApiUrl('/api/auth/me'), {
 			cache: 'no-store',
 			headers: {
