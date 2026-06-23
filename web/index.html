@@ -226,7 +226,7 @@ const mazeDiscordState = {
 	activityScopeReady: false,
 	activityUpdateInFlight: false,
 	lastActivitySignature: '',
-	apiBasePath: '',
+	apiBasePath: shouldUseDiscordActivityFlow() ? '/.proxy' : '',
 	sessionToken: '',
 	user: null,
 	participants: [],

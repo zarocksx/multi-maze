@@ -694,7 +694,13 @@ func _discord_bridge_state() -> Dictionary:
 		"window.mazeDiscord && window.mazeDiscord.getStateJson ? window.mazeDiscord.getStateJson() : ''"
 	)
 	if raw is String and not raw.is_empty():
-		var parsed = JSON.parse_string(raw)
+		var raw_text := str(raw).strip_edges()
+		if not raw_text.begins_with("{"):
+			return {}
+		var json := JSON.new()
+		if json.parse(raw_text) != OK:
+			return {}
+		var parsed = json.data
 		if parsed is Dictionary:
 			return parsed
 	return {}
@@ -911,7 +917,11 @@ func _on_auth_request_completed(
 	if not raw_body.begins_with("{"):
 		_show_discord_unavailable()
 		return
-	var payload = JSON.parse_string(raw_body)
+	var json := JSON.new()
+	if json.parse(raw_body) != OK:
+		_show_discord_unavailable()
+		return
+	var payload = json.data
 	if response_code != 200 or not payload is Dictionary:
 		_show_discord_unavailable()
 		return
@@ -1143,7 +1153,13 @@ func _update_network() -> void:
 		and socket.get_available_packet_count() > 0
 	):
 		var packet := socket.get_packet().get_string_from_utf8()
-		var message = JSON.parse_string(packet)
+		var packet_text := packet.strip_edges()
+		if not packet_text.begins_with("{"):
+			continue
+		var json := JSON.new()
+		if json.parse(packet_text) != OK:
+			continue
+		var message = json.data
 		if message is Dictionary:
 			_handle_message(message)
 
@@ -1159,7 +1175,7 @@ func _connect_and_send(message: Dictionary) -> void:
 	socket = WebSocketPeer.new()
 	last_socket_state = WebSocketPeer.STATE_CLOSED
 	pending_message = message
-	var url := server_input.text.strip_edges()
+	var url := _default_server_url() if _should_use_discord_activity_flow() else server_input.text.strip_edges()
 	if url.is_empty():
 		url = _default_server_url()
 	if OS.has_feature("web") and not discord_session_token.is_empty():
