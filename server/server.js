@@ -19,9 +19,6 @@ const POWER_UP_COUNT = 10;
 const POWER_UP_RESPAWN_MS = 8000;
 const RANK_POINTS = [10, 7, 5, 3, 2, 1, 1, 1];
 const POWER_UP_KINDS = ["speed", "shield", "slow_all", "confuse_all", "freeze_all"];
-const CHAT_MAX_LENGTH = 240;
-const CHAT_HISTORY_LIMIT = 50;
-const CHAT_COOLDOWN_MS = 350;
 const BASE_MAZE_WIDTH = 19;
 const BASE_MAZE_HEIGHT = 13;
 const DEFAULT_MAZE_SCALE = 5;
@@ -280,7 +277,6 @@ function roomMessage(room) {
     round: room.round,
     mazeScale: room.mazeScale,
     podium: room.podium,
-    chat: room.chat.slice(),
   };
 }
 
@@ -306,11 +302,6 @@ function stateMessage(room) {
 function sanitizeName(value, fallbackNumber) {
   const cleaned = String(value || "").replace(/[<>\u0000-\u001f]/g, "").trim().slice(0, 16);
   return cleaned || `Joueur ${fallbackNumber}`;
-}
-
-function sanitizeChatText(value) {
-  if (typeof value !== "string") return "";
-  return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CHAT_MAX_LENGTH);
 }
 
 function canMove(maze, x, y, directionName) {
@@ -741,7 +732,6 @@ function createGameServer({
       confusedUntil: 0,
       frozenUntil: 0,
       shield: false,
-      lastChatAt: 0,
     };
     room.players.set(socket.id, player);
     socket.roomCode = room.code;
@@ -778,7 +768,6 @@ function createGameServer({
         standings: new Map(),
         history: [],
         podium: [],
-        chat: [],
       };
       rooms.set(code, room);
       addPlayer(room, socket, message.name);
@@ -818,26 +807,6 @@ function createGameServer({
       if (applyMove(room, player, String(message.direction || ""))) {
         broadcast(room, stateMessage(room));
       }
-      return;
-    }
-
-    if (message.type === "chat") {
-      const now = Date.now();
-      const text = sanitizeChatText(message.text);
-      if (!text || now - player.lastChatAt < CHAT_COOLDOWN_MS) return;
-      player.lastChatAt = now;
-      const chatMessage = {
-        type: "chat",
-        id: crypto.randomUUID(),
-        playerId: player.id,
-        name: player.name,
-        color: player.color,
-        text,
-        sentAt: now,
-      };
-      room.chat.push(chatMessage);
-      room.chat = room.chat.slice(-CHAT_HISTORY_LIMIT);
-      broadcast(room, chatMessage);
       return;
     }
 
@@ -922,7 +891,6 @@ module.exports = {
   createPowerUps,
   canMove,
   applyPowerUp,
-  sanitizeChatText,
   applyMove,
   resetRoom,
   createAuthSession,

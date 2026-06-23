@@ -67,7 +67,6 @@ Sur l’offre gratuite, Render met le service en veille après une période sans
 
 - Le serveur génère un labyrinthe de 19 × 13 cases.
 - Jusqu’à 8 joueurs par salon.
-- Un chat de salon conserve les 50 derniers messages et affiche le nombre de joueurs connectés.
 - Tous commencent en haut à gauche ; la sortie dorée est en bas à droite.
 - L’hôte lance un compte à rebours synchronisé ; tous les chronomètres partent au même instant.
 - Des objets mystère donnent un turbo ou un bouclier, ou infligent ralentissement, inversion et gel.

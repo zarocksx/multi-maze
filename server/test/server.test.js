@@ -12,7 +12,6 @@ const {
   createPowerUps,
   canMove,
   applyPowerUp,
-  sanitizeChatText,
   applyMove,
   resetRoom,
   createAuthSession,
@@ -304,12 +303,6 @@ test("le serveur bloque tout mouvement avant le départ synchronisé", () => {
   assert.equal(room.phase, "running");
 });
 
-test("les messages du chat sont nettoyés et limités", () => {
-  assert.equal(sanitizeChatText("  Salut\nà tous\u0000  "), "Salut à tous");
-  assert.equal(sanitizeChatText({ text: "non" }), "");
-  assert.equal(sanitizeChatText("a".repeat(300)).length, 240);
-});
-
 test("l’hôte relance tous les joueurs sans remplacer leurs connexions", () => {
   const originalSocket = {};
   const player = {
@@ -397,14 +390,6 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(server.rooms.get(created.room).mazeScale, 10);
 
-  const firstChat = waitForMessage(first, "chat");
-  const secondChat = waitForMessage(second, "chat");
-  second.send(JSON.stringify({ type: "chat", text: "  Salut\nà tous  " }));
-  const [receivedByHost, receivedBySender] = await Promise.all([firstChat, secondChat]);
-  assert.equal(receivedByHost.text, "Salut à tous");
-  assert.equal(receivedByHost.name, "Rose");
-  assert.equal(receivedBySender.id, receivedByHost.id);
-
   const thirdConnection = await connect(url);
   const third = thirdConnection.socket;
   context.after(() => third.terminate());
@@ -413,7 +398,6 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   third.send(JSON.stringify({ type: "join", room: created.room, name: "Or" }));
   const joinedWithHistory = await thirdRoom;
   assert.equal(joinedWithHistory.players.length, 3);
-  assert.deepEqual(joinedWithHistory.chat.map(({ text }) => text), ["Salut à tous"]);
 
   const countdownState = waitForMessage(first, "state");
   first.send(JSON.stringify({ type: "start" }));

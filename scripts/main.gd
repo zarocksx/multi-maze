@@ -8,7 +8,6 @@ const WALL_LEFT := 8
 const CELEBRATION_COLORS := ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff"]
 const SETTINGS_PATH := "user://settings.cfg"
 const GAMEPAD_DEADZONE := 0.42
-const CHAT_ENABLED := false
 
 var socket := WebSocketPeer.new()
 var auth_request: HTTPRequest
@@ -55,15 +54,6 @@ var event_toast: Label
 var event_toast_timer := 0.0
 var rank_label: Label
 var effect_hud_label: Label
-var chat_panel: PanelContainer
-var chat_header_button: Button
-var chat_separator: HSeparator
-var chat_log: RichTextLabel
-var chat_input: LineEdit
-var chat_input_row: HBoxContainer
-var chat_send_button: Button
-var chat_minimized := false
-var seen_chat_messages: Dictionary = {}
 var score_panel: PanelContainer
 var score_rows: VBoxContainer
 var podium_rows: VBoxContainer
@@ -404,75 +394,6 @@ func _build_interface() -> void:
 	_add_touch_direction_button(dpad_surface, "←", "left", Vector2(6, 68))
 	_add_touch_direction_button(dpad_surface, "→", "right", Vector2(130, 68))
 	_add_touch_direction_button(dpad_surface, "↓", "down", Vector2(68, 130))
-
-	chat_panel = PanelContainer.new()
-	chat_panel.name = "ChatPanel"
-	chat_panel.visible = false
-	chat_panel.z_index = 6
-	chat_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	chat_panel.offset_left = -378
-	chat_panel.offset_top = -318
-	chat_panel.offset_right = -16
-	chat_panel.offset_bottom = -16
-	var chat_style := StyleBoxFlat.new()
-	chat_style.bg_color = Color(0.04, 0.08, 0.13, 0.94)
-	chat_style.border_color = Color(0.32, 0.79, 0.95, 0.52)
-	chat_style.set_border_width_all(2)
-	chat_style.set_corner_radius_all(12)
-	chat_panel.add_theme_stylebox_override("panel", chat_style)
-	root.add_child(chat_panel)
-
-	var chat_margin := MarginContainer.new()
-	chat_margin.add_theme_constant_override("margin_left", 14)
-	chat_margin.add_theme_constant_override("margin_top", 12)
-	chat_margin.add_theme_constant_override("margin_right", 14)
-	chat_margin.add_theme_constant_override("margin_bottom", 12)
-	chat_panel.add_child(chat_margin)
-	var chat_content := VBoxContainer.new()
-	chat_content.add_theme_constant_override("separation", 8)
-	chat_margin.add_child(chat_content)
-
-	chat_header_button = Button.new()
-	chat_header_button.text = "CHAT  •  0 JOUEUR    [-]"
-	chat_header_button.flat = true
-	chat_header_button.focus_mode = Control.FOCUS_NONE
-	chat_header_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	chat_header_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	chat_header_button.tooltip_text = "Réduire ou agrandir le chat"
-	chat_header_button.add_theme_font_size_override("font_size", 18)
-	chat_header_button.add_theme_color_override("font_color", Color("83e8ff"))
-	chat_header_button.add_theme_color_override("font_hover_color", Color("b9f3ff"))
-	chat_header_button.pressed.connect(_toggle_chat_panel)
-	chat_content.add_child(chat_header_button)
-	chat_separator = HSeparator.new()
-	chat_content.add_child(chat_separator)
-
-	chat_log = RichTextLabel.new()
-	chat_log.custom_minimum_size.y = 178
-	chat_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	chat_log.scroll_active = true
-	chat_log.scroll_following = true
-	chat_log.selection_enabled = true
-	chat_log.add_theme_color_override("default_color", Color("d6e2f0"))
-	chat_log.add_theme_font_size_override("normal_font_size", 15)
-	chat_content.add_child(chat_log)
-
-	chat_input_row = HBoxContainer.new()
-	chat_input_row.add_theme_constant_override("separation", 8)
-	chat_content.add_child(chat_input_row)
-	chat_input = LineEdit.new()
-	chat_input.placeholder_text = "Écrire un message…"
-	chat_input.max_length = 240
-	chat_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	chat_input.custom_minimum_size.y = 40
-	chat_input.text_submitted.connect(_on_chat_submitted)
-	chat_input_row.add_child(chat_input)
-	chat_send_button = Button.new()
-	chat_send_button.text = "Envoyer"
-	chat_send_button.custom_minimum_size = Vector2(88, 40)
-	chat_send_button.pressed.connect(_send_chat)
-	_apply_button_style(chat_send_button, Color("15546c"), Color("1e718e"), Color("e7fbff"))
-	chat_input_row.add_child(chat_send_button)
 
 	player_tooltip = Label.new()
 	player_tooltip.visible = false
@@ -946,7 +867,6 @@ func _update_network() -> void:
 			visual_positions.clear()
 			trail_marks.clear()
 			celebration_particles.clear()
-			_clear_chat()
 			_refresh_room_controls()
 			_refresh_scoreboard()
 			queue_redraw()
@@ -993,14 +913,10 @@ func _handle_message(message: Dictionary) -> void:
 		"hello":
 			player_id = str(message.get("playerId", ""))
 		"room":
-			var next_room_code := str(message.get("room", ""))
-			if next_room_code != room_code:
-				_clear_chat()
-			room_code = next_room_code
+			room_code = str(message.get("room", ""))
 			host_id = str(message.get("host", ""))
 			maze = message.get("maze", {})
 			_set_players(message.get("players", []))
-			_load_chat_history(message.get("chat", []))
 			_set_winner(str(message.get("winner", "")))
 			race_complete = bool(message.get("complete", false))
 			_apply_race_metadata(message)
@@ -1021,8 +937,6 @@ func _handle_message(message: Dictionary) -> void:
 			_refresh_room_controls()
 			_refresh_scoreboard()
 			queue_redraw()
-		"chat":
-			_append_chat_message(message)
 		"error":
 			status_label.text = str(message.get("message", "Erreur du serveur."))
 
@@ -1057,7 +971,6 @@ func _refresh_room_controls() -> void:
 	start_race_button.visible = is_host_waiting
 	maze_size_controls.visible = is_host_waiting
 	waiting_label.visible = is_in_room and race_phase == "waiting" and host_id != player_id
-	_refresh_chat_panel()
 	_refresh_touch_controls()
 	if is_in_room:
 		if winner_id.is_empty():
@@ -1093,85 +1006,6 @@ func _on_touch_direction_pressed(direction: String) -> void:
 func _on_touch_direction_released(direction: String) -> void:
 	if touch_direction == direction:
 		touch_direction = ""
-
-
-func _refresh_chat_panel() -> void:
-	if not chat_panel:
-		return
-	var is_in_room := not room_code.is_empty()
-	chat_panel.visible = CHAT_ENABLED and is_in_room
-	chat_input.editable = CHAT_ENABLED and is_in_room
-	chat_send_button.disabled = not CHAT_ENABLED or not is_in_room
-	_refresh_chat_header()
-
-
-func _refresh_chat_header() -> void:
-	var suffix := "JOUEUR" if players.size() == 1 else "JOUEURS"
-	var action := "[+]" if chat_minimized else "[-]"
-	chat_header_button.text = "CHAT  •  %d %s    %s" % [players.size(), suffix, action]
-
-
-func _toggle_chat_panel() -> void:
-	_set_chat_minimized(not chat_minimized)
-
-
-func _set_chat_minimized(value: bool) -> void:
-	chat_minimized = value
-	if not chat_panel:
-		return
-	chat_separator.visible = not chat_minimized
-	chat_log.visible = not chat_minimized
-	chat_input_row.visible = not chat_minimized
-	chat_panel.offset_top = -74.0 if chat_minimized else -318.0
-	_refresh_chat_header()
-
-
-func _clear_chat() -> void:
-	seen_chat_messages.clear()
-	if chat_log:
-		chat_log.clear()
-	_set_chat_minimized(false)
-
-
-func _load_chat_history(history: Array) -> void:
-	for message in history:
-		if message is Dictionary:
-			_append_chat_message(message)
-
-
-func _append_chat_message(message: Dictionary) -> void:
-	var message_id := str(message.get("id", ""))
-	if message_id.is_empty():
-		message_id = "%s:%s:%s" % [
-			str(message.get("sentAt", 0)),
-			str(message.get("playerId", "")),
-			str(message.get("text", "")),
-		]
-	if seen_chat_messages.has(message_id):
-		return
-	seen_chat_messages[message_id] = true
-	var player_name := str(message.get("name", "Joueur"))
-	var text := str(message.get("text", ""))
-	var color := Color.from_string(str(message.get("color", "#ffffff")), Color.WHITE)
-	chat_log.push_color(color)
-	chat_log.add_text(player_name)
-	chat_log.pop()
-	chat_log.add_text(" : %s" % text)
-	chat_log.newline()
-
-
-func _on_chat_submitted(_value: String) -> void:
-	_send_chat()
-
-
-func _send_chat() -> void:
-	if room_code.is_empty():
-		return
-	var text := chat_input.text.strip_edges()
-	if text.is_empty():
-		return
-	chat_input.clear()
-	_send_json({"type": "chat", "text": text})
 
 
 func _refresh_scoreboard() -> void:
