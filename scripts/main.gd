@@ -77,6 +77,7 @@ var wall_shake_toggle: CheckButton
 var menu_debug_panel: PanelContainer
 var menu_debug_label: Label
 var menu_debug_lines: Array = []
+var menu_debug_last_visible := false
 var player_tooltip: Label
 var held_direction := ""
 var move_repeat_timer := 0.0
@@ -618,7 +619,16 @@ func _refresh_menu_debug_log() -> void:
 func _update_menu_debug_visibility() -> void:
 	if not is_instance_valid(menu_debug_panel):
 		return
-	menu_debug_panel.visible = is_instance_valid(panel) and panel.visible and room_code.is_empty()
+	var next_visible := is_instance_valid(panel) and panel.visible and room_code.is_empty()
+	menu_debug_panel.visible = next_visible
+	if next_visible == menu_debug_last_visible:
+		return
+	menu_debug_last_visible = next_visible
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval(
+			"window.mazeDiscord && window.mazeDiscord.setDebugOverlayVisible"
+			+ " && window.mazeDiscord.setDebugOverlayVisible(%s)" % ("true" if next_visible else "false")
+		)
 
 
 func _apply_button_style(

@@ -119,6 +119,30 @@ body {
 	text-align: center;
 	z-index: 1;
 }
+
+#maze-debug-overlay {
+	position: fixed;
+	left: 16px;
+	bottom: 16px;
+	box-sizing: border-box;
+	width: min(470px, calc(100vw - 32px));
+	max-height: 148px;
+	padding: 9px 11px;
+	border: 1px solid rgba(131, 232, 255, 0.26);
+	border-radius: 10px;
+	background: rgba(4, 12, 22, 0.78);
+	box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32);
+	color: #c8e6f5;
+	font: 12px/1.35 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+	overflow: hidden;
+	pointer-events: none;
+	white-space: pre-wrap;
+	z-index: 25;
+}
+
+#maze-debug-overlay[hidden] {
+	display: none;
+}
 		</style>
 		$GODOT_HEAD_INCLUDE
 	</head>
@@ -138,6 +162,7 @@ body {
 			</div>
 			<div id="status-notice"></div>
 		</div>
+		<div id="maze-debug-overlay" aria-live="polite" hidden></div>
 
 		<script>
 const DISCORD_ACTIVITY_SESSION_KEY = 'maze-discord-activity-session';
@@ -155,6 +180,7 @@ const mazeDiscordState = {
 	activityUpdateInFlight: false,
 	lastActivitySignature: '',
 	apiBasePath: '',
+	debugOverlayVisible: true,
 	sessionToken: '',
 	user: null,
 	participants: [],
@@ -179,6 +205,7 @@ function mazeDiscordDebugLog(level, message) {
 	while (mazeDiscordState.logs.length > MAZE_DISCORD_LOG_LIMIT) {
 		mazeDiscordState.logs.shift();
 	}
+	renderMazeDebugOverlay();
 }
 
 function mazeDebugUrlPath(input) {
@@ -189,6 +216,66 @@ function mazeDebugUrlPath(input) {
 		return String(input || '').slice(0, 96);
 	}
 }
+
+function shouldShowMazeDebugOverlay() {
+	const params = new URLSearchParams(window.location.search);
+	return shouldUseDiscordActivityFlow() || params.has('debug_logs') || params.has('debug');
+}
+
+function renderMazeDebugOverlay() {
+	const overlay = document.getElementById('maze-debug-overlay');
+	if (!overlay) {
+		return;
+	}
+	if (!mazeDiscordState.debugOverlayVisible || !shouldShowMazeDebugOverlay()) {
+		overlay.hidden = true;
+		return;
+	}
+	overlay.hidden = false;
+	const lines = mazeDiscordState.logs.slice(-8).map((entry) => {
+		const tag = String(entry.level || 'info').toUpperCase().slice(0, 4).padEnd(4, ' ');
+		return tag + ' ' + entry.message;
+	});
+	overlay.textContent = lines.length ? lines.join('\n') : 'INFO diag: en attente des evenements...';
+}
+
+function mazeConsoleArgText(value) {
+	if (typeof value === 'string') {
+		return value;
+	}
+	if (value instanceof Error) {
+		return value.message;
+	}
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function installMazeDebugConsoleCapture() {
+	if (window.__mazeDebugConsoleCaptureInstalled) {
+		return;
+	}
+	window.__mazeDebugConsoleCaptureInstalled = true;
+	const interestingPattern = /Parse JSON|Unexpected character|WebSocket|Discord|Activity|auth|HTTP|SDK|ERROR|WARNING/i;
+	for (const level of ['warn', 'error']) {
+		const nativeConsole = console[level]?.bind(console);
+		if (!nativeConsole) {
+			continue;
+		}
+		console[level] = (...args) => {
+			const text = args.map(mazeConsoleArgText).join(' ').replace(/\s+/g, ' ').trim();
+			if (interestingPattern.test(text)) {
+				mazeDiscordDebugLog(level === 'error' ? 'error' : 'warn', text);
+			}
+			nativeConsole(...args);
+		};
+	}
+}
+
+installMazeDebugConsoleCapture();
+renderMazeDebugOverlay();
 
 function isDiscordActivityHost() {
 	return window.location.hostname.endsWith('.discordsays.com');
@@ -752,6 +839,10 @@ window.mazeDiscord = {
 	},
 	logout() {
 		logoutMazeDiscord();
+	},
+	setDebugOverlayVisible(visible) {
+		mazeDiscordState.debugOverlayVisible = Boolean(visible);
+		renderMazeDebugOverlay();
 	},
 	shouldUseActivityFlow() {
 		return shouldUseDiscordActivityFlow();
