@@ -764,6 +764,19 @@ func _should_use_discord_activity_flow() -> bool:
 		return false
 	if discord_activity_mode:
 		return true
+	var direct_host_check = JavaScriptBridge.eval(
+		"(function(){"
+		+ "const params=new URLSearchParams(window.location.search);"
+		+ "return window.location.hostname.endsWith('.discordsays.com')"
+		+ "|| params.has('instance_id')"
+		+ "|| params.has('launch_id')"
+		+ "|| params.has('frame_id')"
+		+ "|| params.has('guild_id')"
+		+ "|| params.has('channel_id');"
+		+ "})()"
+	)
+	if bool(direct_host_check):
+		return true
 	var raw = JavaScriptBridge.eval(
 		"window.mazeDiscord && window.mazeDiscord.shouldUseActivityFlow ? window.mazeDiscord.shouldUseActivityFlow() : false"
 	)
