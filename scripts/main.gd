@@ -8,7 +8,6 @@ const WALL_LEFT := 8
 const CELEBRATION_COLORS := ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff"]
 const SETTINGS_PATH := "user://settings.cfg"
 const GAMEPAD_DEADZONE := 0.42
-const GHOST_LOOP_PAUSE_MS := 800
 
 var socket := WebSocketPeer.new()
 var auth_request: HTTPRequest
@@ -27,8 +26,6 @@ var race_start_deadline_ms := 0
 var go_flash_until_ms := 0
 var power_ups: Array = []
 var podium: Array = []
-var ghost_run: Dictionary = {}
-var waiting_ghost_started_ms := 0
 var maze_scale := 5
 var current_round := 1
 var last_event_id := ""
@@ -57,15 +54,6 @@ var event_toast: Label
 var event_toast_timer := 0.0
 var rank_label: Label
 var effect_hud_label: Label
-var chat_panel: PanelContainer
-var chat_header_button: Button
-var chat_separator: HSeparator
-var chat_log: RichTextLabel
-var chat_input: LineEdit
-var chat_input_row: HBoxContainer
-var chat_send_button: Button
-var chat_minimized := false
-var seen_chat_messages: Dictionary = {}
 var score_panel: PanelContainer
 var score_rows: VBoxContainer
 var podium_rows: VBoxContainer
@@ -98,12 +86,16 @@ var audio_players: Array = []
 var audio_player_index := 0
 var scoreboard_animated_round := 0
 var wall_shake_enabled := true
+var touchscreen_available := false
+var touch_controls: PanelContainer
+var touch_direction := ""
 
 
 func _ready() -> void:
 	random.randomize()
 	_load_settings()
 	_setup_audio()
+	touchscreen_available = _detect_touchscreen()
 	_build_interface()
 	server_input.text = _default_server_url()
 	_check_discord_session()
@@ -310,6 +302,7 @@ func _build_interface() -> void:
 	name_input = LineEdit.new()
 	name_input.placeholder_text = "Votre pseudo"
 	name_input.max_length = 16
+	name_input.virtual_keyboard_enabled = true
 	name_input.custom_minimum_size = Vector2(280, 42)
 	name_input.text_changed.connect(_on_name_text_changed)
 	name_row.add_child(name_input)
@@ -334,6 +327,7 @@ func _build_interface() -> void:
 	room_input = LineEdit.new()
 	room_input.placeholder_text = "CODE"
 	room_input.max_length = 4
+	room_input.virtual_keyboard_enabled = true
 	room_input.custom_minimum_size = Vector2(94, 42)
 	room_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	room_input.text_changed.connect(_on_room_text_changed)
@@ -353,7 +347,7 @@ func _build_interface() -> void:
 	rows.add_child(status_label)
 
 	var help := Label.new()
-	help.text = "Flèches • ZQSD • WASD • Croix / stick gauche    |    Atteignez la sortie dorée"
+	help.text = "Clavier • Manette • Tactile    |    Atteignez la sortie dorée"
 	help.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	help.offset_left = 18
 	help.offset_right = -18
@@ -376,74 +370,30 @@ func _build_interface() -> void:
 	wall_shake_toggle.toggled.connect(_on_wall_shake_toggled)
 	root.add_child(wall_shake_toggle)
 
-	chat_panel = PanelContainer.new()
-	chat_panel.name = "ChatPanel"
-	chat_panel.visible = false
-	chat_panel.z_index = 6
-	chat_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	chat_panel.offset_left = -378
-	chat_panel.offset_top = -318
-	chat_panel.offset_right = -16
-	chat_panel.offset_bottom = -16
-	var chat_style := StyleBoxFlat.new()
-	chat_style.bg_color = Color(0.04, 0.08, 0.13, 0.94)
-	chat_style.border_color = Color(0.32, 0.79, 0.95, 0.52)
-	chat_style.set_border_width_all(2)
-	chat_style.set_corner_radius_all(12)
-	chat_panel.add_theme_stylebox_override("panel", chat_style)
-	root.add_child(chat_panel)
-
-	var chat_margin := MarginContainer.new()
-	chat_margin.add_theme_constant_override("margin_left", 14)
-	chat_margin.add_theme_constant_override("margin_top", 12)
-	chat_margin.add_theme_constant_override("margin_right", 14)
-	chat_margin.add_theme_constant_override("margin_bottom", 12)
-	chat_panel.add_child(chat_margin)
-	var chat_content := VBoxContainer.new()
-	chat_content.add_theme_constant_override("separation", 8)
-	chat_margin.add_child(chat_content)
-
-	chat_header_button = Button.new()
-	chat_header_button.text = "CHAT  •  0 JOUEUR    [-]"
-	chat_header_button.flat = true
-	chat_header_button.focus_mode = Control.FOCUS_NONE
-	chat_header_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	chat_header_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	chat_header_button.tooltip_text = "Réduire ou agrandir le chat"
-	chat_header_button.add_theme_font_size_override("font_size", 18)
-	chat_header_button.add_theme_color_override("font_color", Color("83e8ff"))
-	chat_header_button.add_theme_color_override("font_hover_color", Color("b9f3ff"))
-	chat_header_button.pressed.connect(_toggle_chat_panel)
-	chat_content.add_child(chat_header_button)
-	chat_separator = HSeparator.new()
-	chat_content.add_child(chat_separator)
-
-	chat_log = RichTextLabel.new()
-	chat_log.custom_minimum_size.y = 178
-	chat_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	chat_log.scroll_active = true
-	chat_log.scroll_following = true
-	chat_log.selection_enabled = true
-	chat_log.add_theme_color_override("default_color", Color("d6e2f0"))
-	chat_log.add_theme_font_size_override("normal_font_size", 15)
-	chat_content.add_child(chat_log)
-
-	chat_input_row = HBoxContainer.new()
-	chat_input_row.add_theme_constant_override("separation", 8)
-	chat_content.add_child(chat_input_row)
-	chat_input = LineEdit.new()
-	chat_input.placeholder_text = "Écrire un message…"
-	chat_input.max_length = 240
-	chat_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	chat_input.custom_minimum_size.y = 40
-	chat_input.text_submitted.connect(_on_chat_submitted)
-	chat_input_row.add_child(chat_input)
-	chat_send_button = Button.new()
-	chat_send_button.text = "Envoyer"
-	chat_send_button.custom_minimum_size = Vector2(88, 40)
-	chat_send_button.pressed.connect(_send_chat)
-	_apply_button_style(chat_send_button, Color("15546c"), Color("1e718e"), Color("e7fbff"))
-	chat_input_row.add_child(chat_send_button)
+	touch_controls = PanelContainer.new()
+	touch_controls.name = "TouchControls"
+	touch_controls.visible = false
+	touch_controls.z_index = 9
+	touch_controls.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	touch_controls.offset_left = 16
+	touch_controls.offset_top = -212
+	touch_controls.offset_right = 212
+	touch_controls.offset_bottom = -16
+	var touch_panel_style := StyleBoxFlat.new()
+	touch_panel_style.bg_color = Color(0.025, 0.06, 0.1, 0.48)
+	touch_panel_style.border_color = Color(0.51, 0.91, 1.0, 0.28)
+	touch_panel_style.set_border_width_all(2)
+	touch_panel_style.set_corner_radius_all(28)
+	touch_controls.add_theme_stylebox_override("panel", touch_panel_style)
+	root.add_child(touch_controls)
+	var dpad_surface := Control.new()
+	dpad_surface.custom_minimum_size = Vector2(196, 196)
+	dpad_surface.mouse_filter = Control.MOUSE_FILTER_PASS
+	touch_controls.add_child(dpad_surface)
+	_add_touch_direction_button(dpad_surface, "↑", "up", Vector2(68, 6))
+	_add_touch_direction_button(dpad_surface, "←", "left", Vector2(6, 68))
+	_add_touch_direction_button(dpad_surface, "→", "right", Vector2(130, 68))
+	_add_touch_direction_button(dpad_surface, "↓", "down", Vector2(68, 130))
 
 	player_tooltip = Label.new()
 	player_tooltip.visible = false
@@ -493,8 +443,11 @@ func _build_interface() -> void:
 
 	var score_header := HBoxContainer.new()
 	score_content.add_child(score_header)
-	_add_score_label(score_header, "#", 48, HORIZONTAL_ALIGNMENT_LEFT, Color("9aa9c2"))
-	_add_score_label(score_header, "Joueur", 280, HORIZONTAL_ALIGNMENT_LEFT, Color("9aa9c2"))
+	_add_score_label(score_header, "#", 40, HORIZONTAL_ALIGNMENT_LEFT, Color("9aa9c2"))
+	var avatar_header_spacer := Control.new()
+	avatar_header_spacer.custom_minimum_size.x = 36
+	score_header.add_child(avatar_header_spacer)
+	_add_score_label(score_header, "Joueur", 270, HORIZONTAL_ALIGNMENT_LEFT, Color("9aa9c2"))
 	_add_score_label(score_header, "Temps", 130, HORIZONTAL_ALIGNMENT_RIGHT, Color("9aa9c2"))
 
 	score_rows = VBoxContainer.new()
@@ -516,6 +469,7 @@ func _build_interface() -> void:
 	score_restart_button.visible = false
 	score_restart_button.pressed.connect(_on_score_restart_pressed)
 	score_content.add_child(score_restart_button)
+	_configure_focus_navigation()
 
 
 func _layout_lobby_panel() -> void:
@@ -551,6 +505,79 @@ func _apply_button_style(
 	button.add_theme_color_override("font_color", font_color)
 	button.add_theme_color_override("font_hover_color", font_color)
 	button.add_theme_color_override("font_pressed_color", font_color)
+	var focus_style := StyleBoxFlat.new()
+	focus_style.bg_color = Color.TRANSPARENT
+	focus_style.border_color = Color("eafcff")
+	focus_style.set_border_width_all(3)
+	focus_style.set_corner_radius_all(9)
+	focus_style.set_expand_margin_all(3)
+	button.add_theme_stylebox_override("focus", focus_style)
+
+
+func _add_touch_direction_button(
+	parent: Control,
+	symbol: String,
+	direction: String,
+	button_position: Vector2
+) -> void:
+	var button := Button.new()
+	button.text = symbol
+	button.position = button_position
+	button.size = Vector2(60, 60)
+	button.custom_minimum_size = Vector2(60, 60)
+	button.focus_mode = Control.FOCUS_NONE
+	button.keep_pressed_outside = true
+	button.add_theme_font_size_override("font_size", 30)
+	_apply_touch_button_style(button)
+	button.button_down.connect(_on_touch_direction_pressed.bind(direction))
+	button.button_up.connect(_on_touch_direction_released.bind(direction))
+	parent.add_child(button)
+
+
+func _apply_touch_button_style(button: Button) -> void:
+	var colors := {
+		"normal": Color(0.08, 0.18, 0.27, 0.78),
+		"hover": Color(0.1, 0.27, 0.38, 0.9),
+		"pressed": Color(0.2, 0.66, 0.78, 0.94),
+	}
+	for state in colors:
+		var style := StyleBoxFlat.new()
+		style.bg_color = colors[state]
+		style.border_color = Color(0.51, 0.91, 1.0, 0.52)
+		style.set_border_width_all(2)
+		style.set_corner_radius_all(18)
+		button.add_theme_stylebox_override(state, style)
+	button.add_theme_color_override("font_color", Color("eafcff"))
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", Color("07101b"))
+
+
+func _configure_focus_navigation() -> void:
+	discord_button.focus_neighbor_bottom = discord_button.get_path_to(name_input)
+	name_input.focus_neighbor_top = name_input.get_path_to(discord_button)
+	name_input.focus_neighbor_bottom = name_input.get_path_to(create_button)
+	create_button.focus_neighbor_top = create_button.get_path_to(name_input)
+	create_button.focus_neighbor_right = create_button.get_path_to(room_input)
+	room_input.focus_neighbor_left = room_input.get_path_to(create_button)
+	room_input.focus_neighbor_right = room_input.get_path_to(join_button)
+	room_input.focus_neighbor_top = room_input.get_path_to(name_input)
+	join_button.focus_neighbor_left = join_button.get_path_to(room_input)
+	join_button.focus_neighbor_top = join_button.get_path_to(name_input)
+	copy_button.focus_neighbor_bottom = copy_button.get_path_to(start_race_button)
+	start_race_button.focus_neighbor_top = start_race_button.get_path_to(copy_button)
+	start_race_button.focus_neighbor_bottom = start_race_button.get_path_to(maze_size_slider)
+	maze_size_slider.focus_neighbor_top = maze_size_slider.get_path_to(start_race_button)
+
+
+func _detect_touchscreen() -> bool:
+	if DisplayServer.is_touchscreen_available():
+		return true
+	if OS.has_feature("web"):
+		var detected = JavaScriptBridge.eval(
+			"navigator.maxTouchPoints > 0 || ('ontouchstart' in window)"
+		)
+		return bool(detected)
+	return false
 
 
 func _setup_audio() -> void:
@@ -755,6 +782,8 @@ func _on_avatar_request_completed(
 					pixel.a *= clampf(edge + 0.5, 0.0, 1.0)
 					image.set_pixel(x, y, pixel)
 			avatar_textures[avatar_url] = ImageTexture.create_from_image(image)
+			if race_complete:
+				_refresh_scoreboard()
 			queue_redraw()
 		else:
 			avatar_textures.erase(avatar_url)
@@ -807,6 +836,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		start_race_button.grab_focus()
 	elif room_code.is_empty() and create_button.is_visible_in_tree():
 		create_button.grab_focus()
+	elif copy_button.is_visible_in_tree():
+		copy_button.grab_focus()
 
 
 func _update_network() -> void:
@@ -836,7 +867,6 @@ func _update_network() -> void:
 			visual_positions.clear()
 			trail_marks.clear()
 			celebration_particles.clear()
-			_clear_chat()
 			_refresh_room_controls()
 			_refresh_scoreboard()
 			queue_redraw()
@@ -883,15 +913,10 @@ func _handle_message(message: Dictionary) -> void:
 		"hello":
 			player_id = str(message.get("playerId", ""))
 		"room":
-			var next_room_code := str(message.get("room", ""))
-			if next_room_code != room_code:
-				_clear_chat()
-				waiting_ghost_started_ms = Time.get_ticks_msec()
-			room_code = next_room_code
+			room_code = str(message.get("room", ""))
 			host_id = str(message.get("host", ""))
 			maze = message.get("maze", {})
 			_set_players(message.get("players", []))
-			_load_chat_history(message.get("chat", []))
 			_set_winner(str(message.get("winner", "")))
 			race_complete = bool(message.get("complete", false))
 			_apply_race_metadata(message)
@@ -912,8 +937,6 @@ func _handle_message(message: Dictionary) -> void:
 			_refresh_room_controls()
 			_refresh_scoreboard()
 			queue_redraw()
-		"chat":
-			_append_chat_message(message)
 		"error":
 			status_label.text = str(message.get("message", "Erreur du serveur."))
 
@@ -925,8 +948,6 @@ func _apply_race_metadata(message: Dictionary) -> void:
 	race_phase = str(message.get("phase", race_phase))
 	power_ups = message.get("powerUps", power_ups)
 	podium = message.get("podium", podium)
-	var next_ghost = message.get("ghost", ghost_run)
-	ghost_run = next_ghost if next_ghost is Dictionary else {}
 	current_round = int(message.get("round", current_round))
 	maze_scale = clampi(int(message.get("mazeScale", maze_scale)), 1, 10)
 	maze_size_slider.set_value_no_signal(maze_scale)
@@ -939,8 +960,6 @@ func _apply_race_metadata(message: Dictionary) -> void:
 		go_flash_until_ms = Time.get_ticks_msec() + 650
 	if race_phase == "waiting":
 		last_event_id = ""
-		if previous_phase != "waiting" or waiting_ghost_started_ms <= 0:
-			waiting_ghost_started_ms = Time.get_ticks_msec()
 	_handle_power_event(message.get("event", {}))
 
 
@@ -952,7 +971,7 @@ func _refresh_room_controls() -> void:
 	start_race_button.visible = is_host_waiting
 	maze_size_controls.visible = is_host_waiting
 	waiting_label.visible = is_in_room and race_phase == "waiting" and host_id != player_id
-	_refresh_chat_panel()
+	_refresh_touch_controls()
 	if is_in_room:
 		if winner_id.is_empty():
 			copy_button.text = "Copier le code  •  %s" % room_code
@@ -961,83 +980,32 @@ func _refresh_room_controls() -> void:
 	queue_redraw()
 
 
-func _refresh_chat_panel() -> void:
-	if not chat_panel:
+func _refresh_touch_controls() -> void:
+	if not touch_controls:
 		return
-	var is_in_room := not room_code.is_empty()
-	chat_panel.visible = is_in_room
-	chat_input.editable = is_in_room
-	chat_send_button.disabled = not is_in_room
-	_refresh_chat_header()
+	var active_phase := race_phase == "countdown" or race_phase == "running"
+	var show_controls := (
+		touchscreen_available
+		and not room_code.is_empty()
+		and active_phase
+		and not race_complete
+		and not _local_player_finished()
+	)
+	touch_controls.visible = show_controls
+	wall_shake_toggle.visible = not (touchscreen_available and not room_code.is_empty())
+	if not show_controls:
+		touch_direction = ""
 
 
-func _refresh_chat_header() -> void:
-	var suffix := "JOUEUR" if players.size() == 1 else "JOUEURS"
-	var action := "[+]" if chat_minimized else "[-]"
-	chat_header_button.text = "CHAT  •  %d %s    %s" % [players.size(), suffix, action]
+func _on_touch_direction_pressed(direction: String) -> void:
+	touch_direction = direction
+	held_direction = ""
+	move_repeat_timer = 0.0
 
 
-func _toggle_chat_panel() -> void:
-	_set_chat_minimized(not chat_minimized)
-
-
-func _set_chat_minimized(value: bool) -> void:
-	chat_minimized = value
-	if not chat_panel:
-		return
-	chat_separator.visible = not chat_minimized
-	chat_log.visible = not chat_minimized
-	chat_input_row.visible = not chat_minimized
-	chat_panel.offset_top = -74.0 if chat_minimized else -318.0
-	_refresh_chat_header()
-
-
-func _clear_chat() -> void:
-	seen_chat_messages.clear()
-	if chat_log:
-		chat_log.clear()
-	_set_chat_minimized(false)
-
-
-func _load_chat_history(history: Array) -> void:
-	for message in history:
-		if message is Dictionary:
-			_append_chat_message(message)
-
-
-func _append_chat_message(message: Dictionary) -> void:
-	var message_id := str(message.get("id", ""))
-	if message_id.is_empty():
-		message_id = "%s:%s:%s" % [
-			str(message.get("sentAt", 0)),
-			str(message.get("playerId", "")),
-			str(message.get("text", "")),
-		]
-	if seen_chat_messages.has(message_id):
-		return
-	seen_chat_messages[message_id] = true
-	var player_name := str(message.get("name", "Joueur"))
-	var text := str(message.get("text", ""))
-	var color := Color.from_string(str(message.get("color", "#ffffff")), Color.WHITE)
-	chat_log.push_color(color)
-	chat_log.add_text(player_name)
-	chat_log.pop()
-	chat_log.add_text(" : %s" % text)
-	chat_log.newline()
-
-
-func _on_chat_submitted(_value: String) -> void:
-	_send_chat()
-
-
-func _send_chat() -> void:
-	if room_code.is_empty():
-		return
-	var text := chat_input.text.strip_edges()
-	if text.is_empty():
-		return
-	chat_input.clear()
-	_send_json({"type": "chat", "text": text})
+func _on_touch_direction_released(direction: String) -> void:
+	if touch_direction == direction:
+		touch_direction = ""
 
 
 func _refresh_scoreboard() -> void:
@@ -1069,10 +1037,11 @@ func _refresh_scoreboard() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT,
 			color
 		)
+		_add_score_avatar(row, player, color)
 		_add_score_label(
 			row,
 			str(player.get("name", "Joueur")),
-			280,
+			270,
 			HORIZONTAL_ALIGNMENT_LEFT,
 			color
 		)
@@ -1095,6 +1064,7 @@ func _refresh_scoreboard() -> void:
 		podium_row.add_theme_constant_override("separation", 8)
 		podium_rows.add_child(podium_row)
 		var color := Color.from_string(str(standing.get("color", "#ffffff")), Color.WHITE)
+		_ensure_avatar_loaded(standing)
 		_add_score_label(
 			podium_row,
 			"%d" % (index + 1),
@@ -1102,10 +1072,11 @@ func _refresh_scoreboard() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT,
 			Color("ffd166") if index == 0 else Color("c6d5e8")
 		)
+		_add_score_avatar(podium_row, standing, color)
 		_add_score_label(
 			podium_row,
 			str(standing.get("name", "Joueur")),
-			270,
+			235,
 			HORIZONTAL_ALIGNMENT_LEFT,
 			color
 		)
@@ -1146,8 +1117,51 @@ func _add_score_label(
 	label.custom_minimum_size.x = minimum_width
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.horizontal_alignment = alignment
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.add_theme_color_override("font_color", color)
 	parent.add_child(label)
+
+
+func _add_score_avatar(parent: Container, player: Dictionary, color: Color) -> void:
+	var avatar_slot := Control.new()
+	avatar_slot.custom_minimum_size = Vector2(36, 32)
+	avatar_slot.tooltip_text = "Avatar de %s" % str(player.get("name", "Joueur"))
+	parent.add_child(avatar_slot)
+
+	var avatar_url := str(player.get("avatarUrl", ""))
+	var avatar_texture = avatar_textures.get(avatar_url)
+	if avatar_texture is Texture2D:
+		var border := Label.new()
+		border.text = "●"
+		border.position = Vector2.ZERO
+		border.size = Vector2(32, 32)
+		border.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		border.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		border.add_theme_font_size_override("font_size", 31)
+		border.add_theme_color_override("font_color", color)
+		border.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		avatar_slot.add_child(border)
+
+		var portrait := TextureRect.new()
+		portrait.texture = avatar_texture
+		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		portrait.position = Vector2(4, 4)
+		portrait.size = Vector2(24, 24)
+		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		avatar_slot.add_child(portrait)
+		return
+
+	var fallback := Label.new()
+	fallback.text = "●"
+	fallback.position = Vector2.ZERO
+	fallback.size = Vector2(32, 32)
+	fallback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fallback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	fallback.add_theme_font_size_override("font_size", 24)
+	fallback.add_theme_color_override("font_color", color)
+	fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	avatar_slot.add_child(fallback)
 
 
 func _sort_players_by_rank(first: Dictionary, second: Dictionary) -> bool:
@@ -1661,6 +1675,8 @@ func _input_direction(allow_keyboard: bool = true) -> String:
 			direction = "left"
 	if direction.is_empty():
 		direction = _gamepad_direction()
+	if direction.is_empty():
+		direction = touch_direction
 	if direction.is_empty() or not _local_effect_active("confused"):
 		return direction
 	var opposites := {"up": "down", "right": "left", "down": "up", "left": "right"}
@@ -1724,7 +1740,6 @@ func _draw() -> void:
 	draw_rect(Rect2(origin - Vector2(7, 7), maze_size + Vector2(14, 14)), maze_backing, true)
 	_draw_goal(origin, cell_size)
 	_draw_direction_hint(origin, cell_size)
-	_draw_ghost(origin, cell_size)
 	_draw_power_ups(origin, cell_size)
 	_draw_trails(origin, cell_size)
 	_draw_movement_ripples(origin, cell_size)
@@ -2034,42 +2049,6 @@ func _draw_direction_hint(origin: Vector2, cell_size: float) -> void:
 		var start := from.lerp(to, float(segment) / 14.0)
 		var end := from.lerp(to, float(segment + 1) / 14.0)
 		draw_line(start, end, Color(1.0, 0.82, 0.36, 0.24), 2.0, true)
-
-
-func _draw_ghost(origin: Vector2, cell_size: float) -> void:
-	var is_waiting_preview := race_phase == "waiting"
-	if ghost_run.is_empty() or (not is_waiting_preview and not _race_can_move()):
-		return
-	var path: Array = ghost_run.get("path", [])
-	if path.is_empty():
-		return
-	var elapsed := 0
-	if is_waiting_preview:
-		var path_duration := int(path[path.size() - 1].get("t", 0))
-		var run_duration := maxi(1, int(ghost_run.get("timeMs", path_duration)))
-		var cycle_duration := run_duration + GHOST_LOOP_PAUSE_MS
-		var cycle_elapsed := maxi(0, Time.get_ticks_msec() - waiting_ghost_started_ms)
-		elapsed = mini(cycle_elapsed % cycle_duration, run_duration)
-	else:
-		elapsed = maxi(0, Time.get_ticks_msec() - race_start_deadline_ms)
-	var previous: Dictionary = path[0]
-	var next: Dictionary = path[path.size() - 1]
-	for index in range(1, path.size()):
-		next = path[index]
-		if int(next.get("t", 0)) >= elapsed:
-			break
-		previous = next
-	var span := maxi(1, int(next.get("t", 0)) - int(previous.get("t", 0)))
-	var blend := clampf((elapsed - int(previous.get("t", 0))) / float(span), 0.0, 1.0)
-	var position := Vector2(float(previous.get("x", 0)), float(previous.get("y", 0))).lerp(
-		Vector2(float(next.get("x", 0)), float(next.get("y", 0))),
-		blend
-	)
-	var center := origin + (position + Vector2(0.5, 0.5)) * cell_size
-	var color := Color.from_string(str(ghost_run.get("color", "#ffffff")), Color.WHITE)
-	color.a = 0.28
-	draw_circle(center, clampf(cell_size * 0.24, 4.0, 12.0), color)
-	draw_arc(center, cell_size * 0.34, 0.0, TAU, 28, Color(1, 1, 1, 0.16), 1.5, true)
 
 
 func _draw_trails(origin: Vector2, cell_size: float) -> void:

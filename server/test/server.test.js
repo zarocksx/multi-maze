@@ -12,7 +12,6 @@ const {
   createPowerUps,
   canMove,
   applyPowerUp,
-  sanitizeChatText,
   applyMove,
   resetRoom,
   createAuthSession,
@@ -205,6 +204,7 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
   };
   const first = { id: "first", name: "Bleu", color: "#45d9ff", x: 0, y: 0, lastMoveAt: 0, finishedAt: 0, timeMs: 0, rank: 0 };
   const second = { id: "second", name: "Rose", color: "#ff5c8a", x: 0, y: 0, lastMoveAt: 0, finishedAt: 0, timeMs: 0, rank: 0 };
+  first.avatarUrl = "/api/discord/avatar/123456789/avatar.png";
   const room = {
     maze,
     players: new Map([[first.id, first], [second.id, second]]),
@@ -218,7 +218,6 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
     standings: new Map(),
     history: [],
     podium: [],
-    bestRun: null,
   };
 
   assert.equal(applyMove(room, first, "right", 100), true);
@@ -238,13 +237,7 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
     { name: "Bleu", points: 10 },
     { name: "Rose", points: 7 },
   ]);
-  assert.equal(room.bestRun.name, "Bleu");
-  assert.equal(room.bestRun.timeMs, 100);
-  assert.deepEqual(room.bestRun.path.map(({ x, y, t }) => ({ x, y, t })), [
-    { x: 0, y: 0, t: 0 },
-    { x: 1, y: 0, t: 0 },
-    { x: 2, y: 0, t: 100 },
-  ]);
+  assert.equal(room.podium[0].avatarUrl, first.avatarUrl);
 
   resetRoom(room, maze);
   room.phase = "running";
@@ -258,7 +251,6 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
     { name: "Rose", points: 17 },
     { name: "Bleu", points: 17 },
   ]);
-  assert.equal(room.bestRun.name, "Bleu");
 });
 
 test("les objets mystère sont uniques et appliquent bonus ou malus", () => {
@@ -309,12 +301,6 @@ test("le serveur bloque tout mouvement avant le départ synchronisé", () => {
   assert.equal(applyMove(room, player, "right", 1000), true);
   assert.equal(player.x, 1);
   assert.equal(room.phase, "running");
-});
-
-test("les messages du chat sont nettoyés et limités", () => {
-  assert.equal(sanitizeChatText("  Salut\nà tous\u0000  "), "Salut à tous");
-  assert.equal(sanitizeChatText({ text: "non" }), "");
-  assert.equal(sanitizeChatText("a".repeat(300)).length, 240);
 });
 
 test("l’hôte relance tous les joueurs sans remplacer leurs connexions", () => {
@@ -381,13 +367,7 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   assert.equal(created.phase, "waiting");
   assert.equal(created.mazeScale, 5);
   assert.equal(created.powerUps.length, 10);
-  assert.equal(created.ghost.isDemo, true);
-  assert.deepEqual(created.ghost.path[0], { x: 0, y: 0, t: 0 });
-  assert.deepEqual(created.ghost.path.at(-1), {
-    x: created.maze.exit.x,
-    y: created.maze.exit.y,
-    t: created.ghost.timeMs,
-  });
+  assert.equal("ghost" in created, false);
 
   const firstUpdate = waitForMessage(first, "room");
   const secondRoom = waitForMessage(second, "room");
@@ -410,14 +390,6 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(server.rooms.get(created.room).mazeScale, 10);
 
-  const firstChat = waitForMessage(first, "chat");
-  const secondChat = waitForMessage(second, "chat");
-  second.send(JSON.stringify({ type: "chat", text: "  Salut\nà tous  " }));
-  const [receivedByHost, receivedBySender] = await Promise.all([firstChat, secondChat]);
-  assert.equal(receivedByHost.text, "Salut à tous");
-  assert.equal(receivedByHost.name, "Rose");
-  assert.equal(receivedBySender.id, receivedByHost.id);
-
   const thirdConnection = await connect(url);
   const third = thirdConnection.socket;
   context.after(() => third.terminate());
@@ -426,7 +398,6 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   third.send(JSON.stringify({ type: "join", room: created.room, name: "Or" }));
   const joinedWithHistory = await thirdRoom;
   assert.equal(joinedWithHistory.players.length, 3);
-  assert.deepEqual(joinedWithHistory.chat.map(({ text }) => text), ["Salut à tous"]);
 
   const countdownState = waitForMessage(first, "state");
   first.send(JSON.stringify({ type: "start" }));
