@@ -205,6 +205,7 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
   };
   const first = { id: "first", name: "Bleu", color: "#45d9ff", x: 0, y: 0, lastMoveAt: 0, finishedAt: 0, timeMs: 0, rank: 0 };
   const second = { id: "second", name: "Rose", color: "#ff5c8a", x: 0, y: 0, lastMoveAt: 0, finishedAt: 0, timeMs: 0, rank: 0 };
+  first.avatarUrl = "/api/discord/avatar/123456789/avatar.png";
   const room = {
     maze,
     players: new Map([[first.id, first], [second.id, second]]),
@@ -218,7 +219,6 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
     standings: new Map(),
     history: [],
     podium: [],
-    bestRun: null,
   };
 
   assert.equal(applyMove(room, first, "right", 100), true);
@@ -238,13 +238,7 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
     { name: "Bleu", points: 10 },
     { name: "Rose", points: 7 },
   ]);
-  assert.equal(room.bestRun.name, "Bleu");
-  assert.equal(room.bestRun.timeMs, 100);
-  assert.deepEqual(room.bestRun.path.map(({ x, y, t }) => ({ x, y, t })), [
-    { x: 0, y: 0, t: 0 },
-    { x: 1, y: 0, t: 0 },
-    { x: 2, y: 0, t: 100 },
-  ]);
+  assert.equal(room.podium[0].avatarUrl, first.avatarUrl);
 
   resetRoom(room, maze);
   room.phase = "running";
@@ -258,7 +252,6 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
     { name: "Rose", points: 17 },
     { name: "Bleu", points: 17 },
   ]);
-  assert.equal(room.bestRun.name, "Bleu");
 });
 
 test("les objets mystère sont uniques et appliquent bonus ou malus", () => {
@@ -381,13 +374,7 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   assert.equal(created.phase, "waiting");
   assert.equal(created.mazeScale, 5);
   assert.equal(created.powerUps.length, 10);
-  assert.equal(created.ghost.isDemo, true);
-  assert.deepEqual(created.ghost.path[0], { x: 0, y: 0, t: 0 });
-  assert.deepEqual(created.ghost.path.at(-1), {
-    x: created.maze.exit.x,
-    y: created.maze.exit.y,
-    t: created.ghost.timeMs,
-  });
+  assert.equal("ghost" in created, false);
 
   const firstUpdate = waitForMessage(first, "room");
   const secondRoom = waitForMessage(second, "room");
