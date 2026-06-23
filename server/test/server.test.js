@@ -98,6 +98,27 @@ test("un WebSocket authentifié utilise le nom et l'avatar Discord", async (cont
   );
 });
 
+test("un WebSocket Activity authentifie via query string utilise le profil Discord", async (context) => {
+  const sessionSecret = "activity-websocket-secret";
+  const session = createAuthSession({
+    id: "222222222222222222",
+    username: "activity_name",
+    global_name: "Activity Runner",
+    avatar: "activityavatar",
+  }, sessionSecret);
+  const server = createGameServer({ discordConfig: { sessionSecret } });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const connection = await connect(`ws://127.0.0.1:${address.port}/ws?session=${encodeURIComponent(session)}`);
+  context.after(() => connection.socket.terminate());
+  await connection.hello;
+  const roomMessage = waitForMessage(connection.socket, "room");
+  connection.socket.send(JSON.stringify({ type: "create", name: "Nom local" }));
+  const room = await roomMessage;
+  assert.equal(room.players[0].name, "Activity Runner");
+  assert.equal(room.players[0].discord, true);
+});
+
 test("le callback OAuth Discord crée une session HTTP utilisable par le jeu", async (context) => {
   const discordConfig = {
     clientId: "client-id",
@@ -146,6 +167,53 @@ test("le callback OAuth Discord crée une session HTTP utilisable par le jeu", a
   assert.equal(payload.authenticated, true);
   assert.equal(payload.user.displayName, "OAuth Runner");
   assert.equal(payload.user.avatarUrl, "/api/discord/avatar/default/3.png");
+});
+
+test("le endpoint Activity Discord retourne un token de session utilisable sans cookie", async (context) => {
+  const discordConfig = {
+    clientId: "client-id",
+    clientSecret: "client-secret",
+    redirectUri: "http://127.0.0.1/auth/discord/callback",
+    sessionSecret: "activity-oauth-secret",
+  };
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "discord-activity-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      id: "333333333333333333",
+      username: "activity_user",
+      global_name: "Activity OAuth",
+      avatar: null,
+      default_avatar: "4",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  const server = createGameServer({ discordConfig, fetchImpl });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  const authResponse = await fetch(`${origin}/api/auth/discord/activity`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: "activity-code" }),
+  });
+  assert.equal(authResponse.status, 200);
+  const authPayload = await authResponse.json();
+  assert.equal(authPayload.authenticated, true);
+  assert.equal(authPayload.access_token, "discord-activity-token");
+  assert.ok(authPayload.session);
+
+  const profile = await fetch(`${origin}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${authPayload.session}` },
+  });
+  const payload = await profile.json();
+  assert.equal(payload.authenticated, true);
+  assert.equal(payload.user.displayName, "Activity OAuth");
+  assert.equal(payload.user.avatarUrl, "/api/discord/avatar/default/4.png");
 });
 
 test("les pages légales sont accessibles avec des URLs sans extension", async (context) => {
