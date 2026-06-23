@@ -212,7 +212,7 @@ body {
 			</div>
 		</div>
 
-		<script type="module">
+		<script>
 const DISCORD_ACTIVITY_SESSION_KEY = 'maze-discord-activity-session';
 
 const mazeDiscordState = {
@@ -275,6 +275,99 @@ function getMazeWebSocketUrl() {
 	return url.toString();
 }
 
+function mazeActivityProxyPath(pathname) {
+	const proxyBasePath = mazeDiscordState.apiBasePath;
+	if (!shouldUseDiscordActivityFlow() || !proxyBasePath) {
+		return pathname;
+	}
+	if (pathname === proxyBasePath || pathname.startsWith(`${proxyBasePath}/`)) {
+		return pathname;
+	}
+	if (pathname === '/ws' || pathname.startsWith('/api/') || pathname.startsWith('/vendor/')) {
+		return `${proxyBasePath}${pathname}`;
+	}
+	return pathname;
+}
+
+function rewriteMazeActivityUrl(input) {
+	if (typeof input !== 'string' && !(input instanceof URL)) {
+		return input;
+	}
+	try {
+		const url = new URL(input, window.location.href);
+		if (url.origin !== window.location.origin) {
+			return input;
+		}
+		const nextPathname = mazeActivityProxyPath(url.pathname);
+		if (nextPathname === url.pathname) {
+			return input;
+		}
+		url.pathname = nextPathname;
+		return url.toString();
+	} catch {
+		return input;
+	}
+}
+
+function installMazeActivityNetworkRewrite() {
+	if (!shouldUseDiscordActivityFlow() || window.__mazeActivityNetworkRewriteInstalled) {
+		return;
+	}
+	window.__mazeActivityNetworkRewriteInstalled = true;
+
+	const NativeWebSocket = window.WebSocket;
+	if (typeof NativeWebSocket === 'function') {
+		const MazeWebSocket = function (url, protocols) {
+			const nextUrl = rewriteMazeActivityUrl(url);
+			if (protocols === undefined) {
+				return new NativeWebSocket(nextUrl);
+			}
+			return new NativeWebSocket(nextUrl, protocols);
+		};
+		Object.setPrototypeOf(MazeWebSocket, NativeWebSocket);
+		MazeWebSocket.prototype = NativeWebSocket.prototype;
+		window.WebSocket = MazeWebSocket;
+	}
+
+	const nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+	if (nativeFetch) {
+		window.fetch = function (resource, init) {
+			const noRewrite = Boolean(init && init.mazeActivityNoRewrite);
+			let fetchInit = init;
+			if (noRewrite) {
+				fetchInit = { ...init };
+				delete fetchInit.mazeActivityNoRewrite;
+				return nativeFetch(resource, fetchInit);
+			}
+			if (typeof Request !== 'undefined' && resource instanceof Request) {
+				const nextUrl = rewriteMazeActivityUrl(resource.url);
+				if (nextUrl !== resource.url) {
+					return nativeFetch(new Request(nextUrl, resource), fetchInit);
+				}
+				return nativeFetch(resource, fetchInit);
+			}
+			return nativeFetch(rewriteMazeActivityUrl(resource), fetchInit);
+		};
+	}
+
+	const NativeXMLHttpRequest = window.XMLHttpRequest;
+	if (typeof NativeXMLHttpRequest === 'function') {
+		const MazeXMLHttpRequest = function () {
+			const xhr = new NativeXMLHttpRequest();
+			const nativeOpen = xhr.open;
+			xhr.open = function (method, url, ...rest) {
+				return nativeOpen.call(xhr, method, rewriteMazeActivityUrl(url), ...rest);
+			};
+			return xhr;
+		};
+		Object.setPrototypeOf(MazeXMLHttpRequest, NativeXMLHttpRequest);
+		MazeXMLHttpRequest.prototype = NativeXMLHttpRequest.prototype;
+		window.XMLHttpRequest = MazeXMLHttpRequest;
+	}
+}
+
+installMazeActivityNetworkRewrite();
+
 function mazeApiBasePathFromUrl(url, path) {
 	const pathname = new URL(url, window.location.origin).pathname;
 	if (!pathname.endsWith(path)) {
@@ -299,7 +392,7 @@ async function fetchMazeDiscordJson(path, init = {}) {
 	let lastError = null;
 	for (const candidate of mazeApiCandidates(path)) {
 		try {
-			const response = await fetch(candidate.url, init);
+			const response = await fetch(candidate.url, { ...init, mazeActivityNoRewrite: true });
 			const text = await response.text();
 			let payload = null;
 			try {
@@ -515,7 +608,7 @@ async function initMazeDiscord() {
 			if (!mazeDiscordState.isActivity) {
 				return;
 			}
-			const { DiscordSDK } = await import('/vendor/discord-embedded-app-sdk.mjs');
+			const { DiscordSDK } = await import(mazeApiUrl('/vendor/discord-embedded-app-sdk.mjs'));
 			mazeDiscordSdk = new DiscordSDK(mazeDiscordState.clientId);
 			void mazeDiscordSdk.subscribe('READY', (payload) => {
 				setMazeDiscordActivityUser(payload?.user);
