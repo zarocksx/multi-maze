@@ -759,6 +759,17 @@ func _discord_bridge_state() -> Dictionary:
 	return {}
 
 
+func _should_use_discord_activity_flow() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	if discord_activity_mode:
+		return true
+	var raw = JavaScriptBridge.eval(
+		"window.mazeDiscord && window.mazeDiscord.shouldUseActivityFlow ? window.mazeDiscord.shouldUseActivityFlow() : false"
+	)
+	return bool(raw)
+
+
 func _request_discord_session_check() -> void:
 	auth_request_action = "check"
 	var error := auth_request.request(_http_url("/api/auth/me"), _discord_auth_headers())
@@ -827,7 +838,7 @@ func _on_discord_pressed() -> void:
 		return
 	discord_button.disabled = true
 	discord_status_label.text = "Ouverture de Discord…"
-	if discord_activity_mode:
+	if _should_use_discord_activity_flow():
 		discord_button.disabled = true
 		discord_status_label.text = "Autorisation Discord..."
 		discord_login_pending = true

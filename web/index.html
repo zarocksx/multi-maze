@@ -231,6 +231,23 @@ const mazeDiscordState = {
 let mazeDiscordSdk = null;
 let mazeDiscordInitPromise = null;
 
+function isDiscordActivityHost() {
+	return window.location.hostname.endsWith('.discordsays.com');
+}
+
+function hasDiscordActivityLaunchParams() {
+	const params = new URLSearchParams(window.location.search);
+	return params.has('instance_id')
+		|| params.has('launch_id')
+		|| params.has('frame_id')
+		|| params.has('guild_id')
+		|| params.has('channel_id');
+}
+
+function shouldUseDiscordActivityFlow() {
+	return isDiscordActivityHost() || hasDiscordActivityLaunchParams();
+}
+
 function mazeDiscordSnapshot() {
 	return {
 		enabled: mazeDiscordState.enabled,
@@ -302,8 +319,9 @@ async function initMazeDiscord() {
 			mazeDiscordState.clientId = typeof config.clientId === 'string' ? config.clientId : '';
 			setMazeDiscordSessionToken(window.sessionStorage.getItem(DISCORD_ACTIVITY_SESSION_KEY) || '');
 			await refreshMazeDiscordSession();
-			const embedded = window.self !== window.top;
-			mazeDiscordState.isActivity = embedded && mazeDiscordState.enabled && !!mazeDiscordState.clientId;
+			mazeDiscordState.isActivity = shouldUseDiscordActivityFlow()
+				&& mazeDiscordState.enabled
+				&& !!mazeDiscordState.clientId;
 			if (!mazeDiscordState.isActivity) {
 				return;
 			}
@@ -388,6 +406,9 @@ window.mazeDiscord = {
 	},
 	logout() {
 		logoutMazeDiscord();
+	},
+	shouldUseActivityFlow() {
+		return shouldUseDiscordActivityFlow();
 	},
 	getStateJson() {
 		return JSON.stringify(mazeDiscordSnapshot());
