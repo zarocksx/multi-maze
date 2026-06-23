@@ -214,6 +214,7 @@ body {
 
 		<script>
 const DISCORD_ACTIVITY_SESSION_KEY = 'maze-discord-activity-session';
+const MAZE_DISCORD_LOG_LIMIT = 24;
 
 const mazeDiscordState = {
 	enabled: false,
@@ -230,11 +231,37 @@ const mazeDiscordState = {
 	sessionToken: '',
 	user: null,
 	participants: [],
+	logs: [],
 	error: '',
 };
 
 let mazeDiscordSdk = null;
 let mazeDiscordInitPromise = null;
+let mazeDiscordLogId = 0;
+
+function mazeDiscordDebugLog(level, message) {
+	const text = String(message || '').replace(/\s+/g, ' ').trim();
+	if (!text) {
+		return;
+	}
+	mazeDiscordState.logs.push({
+		id: ++mazeDiscordLogId,
+		level,
+		message: text.slice(0, 180),
+	});
+	while (mazeDiscordState.logs.length > MAZE_DISCORD_LOG_LIMIT) {
+		mazeDiscordState.logs.shift();
+	}
+}
+
+function mazeDebugUrlPath(input) {
+	try {
+		const url = new URL(input, window.location.href);
+		return `${url.pathname}${url.search ? '?…' : ''}`;
+	} catch {
+		return String(input || '').slice(0, 96);
+	}
+}
 
 function isDiscordActivityHost() {
 	return window.location.hostname.endsWith('.discordsays.com');
@@ -314,11 +341,15 @@ function installMazeActivityNetworkRewrite() {
 		return;
 	}
 	window.__mazeActivityNetworkRewriteInstalled = true;
+	mazeDiscordDebugLog('discord', 'Activity détectée : hooks réseau installés');
 
 	const NativeWebSocket = window.WebSocket;
 	if (typeof NativeWebSocket === 'function') {
 		const MazeWebSocket = function (url, protocols) {
 			const nextUrl = rewriteMazeActivityUrl(url);
+			if (String(nextUrl) !== String(url)) {
+				mazeDiscordDebugLog('net', `WebSocket réécrit vers ${mazeDebugUrlPath(nextUrl)}`);
+			}
 			if (protocols === undefined) {
 				return new NativeWebSocket(nextUrl);
 			}
@@ -342,11 +373,16 @@ function installMazeActivityNetworkRewrite() {
 			if (typeof Request !== 'undefined' && resource instanceof Request) {
 				const nextUrl = rewriteMazeActivityUrl(resource.url);
 				if (nextUrl !== resource.url) {
+					mazeDiscordDebugLog('net', `fetch réécrit vers ${mazeDebugUrlPath(nextUrl)}`);
 					return nativeFetch(new Request(nextUrl, resource), fetchInit);
 				}
 				return nativeFetch(resource, fetchInit);
 			}
-			return nativeFetch(rewriteMazeActivityUrl(resource), fetchInit);
+			const nextResource = rewriteMazeActivityUrl(resource);
+			if (String(nextResource) !== String(resource)) {
+				mazeDiscordDebugLog('net', `fetch réécrit vers ${mazeDebugUrlPath(nextResource)}`);
+			}
+			return nativeFetch(nextResource, fetchInit);
 		};
 	}
 
@@ -356,7 +392,11 @@ function installMazeActivityNetworkRewrite() {
 			const xhr = new NativeXMLHttpRequest();
 			const nativeOpen = xhr.open;
 			xhr.open = function (method, url, ...rest) {
-				return nativeOpen.call(xhr, method, rewriteMazeActivityUrl(url), ...rest);
+				const nextUrl = rewriteMazeActivityUrl(url);
+				if (String(nextUrl) !== String(url)) {
+					mazeDiscordDebugLog('net', `XHR réécrit vers ${mazeDebugUrlPath(nextUrl)}`);
+				}
+				return nativeOpen.call(xhr, method, nextUrl, ...rest);
 			};
 			return xhr;
 		};
@@ -389,6 +429,8 @@ function mazeApiCandidates(path) {
 
 async function fetchMazeDiscordJson(path, init = {}) {
 	let lastError = null;
+	const method = String(init.method || 'GET').toUpperCase();
+	mazeDiscordDebugLog('net', `${method} ${path}`);
 	for (const candidate of mazeApiCandidates(path)) {
 		try {
 			const response = await fetch(candidate.url, { ...init, mazeActivityNoRewrite: true });
@@ -397,16 +439,29 @@ async function fetchMazeDiscordJson(path, init = {}) {
 			try {
 				payload = text ? JSON.parse(text) : {};
 			} catch {
+				mazeDiscordDebugLog(
+					'warn',
+					`Non JSON ${mazeDebugUrlPath(candidate.url)} (${response.status}) ${text.slice(0, 40)}`
+				);
 				lastError = new Error(`Réponse non JSON depuis ${candidate.url}`);
 				continue;
 			}
 			if (!response.ok) {
+				mazeDiscordDebugLog('warn', `HTTP ${response.status} ${mazeDebugUrlPath(candidate.url)}`);
 				lastError = new Error(payload?.error || `Erreur HTTP ${response.status}`);
 				continue;
 			}
 			mazeDiscordState.apiBasePath = mazeApiBasePathFromUrl(candidate.url, path);
+			mazeDiscordDebugLog('ok', `API OK ${mazeDebugUrlPath(candidate.url)}`);
+			if (mazeDiscordState.apiBasePath) {
+				mazeDiscordDebugLog('net', `Fallback API actif : ${mazeDiscordState.apiBasePath}`);
+			}
 			return { response, payload };
 		} catch (error) {
+			mazeDiscordDebugLog(
+				'warn',
+				`Fetch KO ${mazeDebugUrlPath(candidate.url)} : ${error instanceof Error ? error.message : error}`
+			);
 			lastError = error;
 		}
 	}
@@ -458,6 +513,7 @@ function setMazeDiscordActivityUser(user) {
 		return false;
 	}
 	mazeDiscordState.user = nextUser;
+	mazeDiscordDebugLog('discord', `Profil Activity reçu : ${mazeDiscordDisplayName(nextUser)}`);
 	return true;
 }
 
@@ -465,6 +521,7 @@ function updateMazeDiscordParticipants(participants) {
 	mazeDiscordState.participants = Array.isArray(participants)
 		? participants.map(sanitizeMazeDiscordUser).filter(Boolean)
 		: [];
+	mazeDiscordDebugLog('discord', `Participants Activity : ${mazeDiscordState.participants.length}`);
 	if (mazeDiscordState.user != null) {
 		const refreshed = mazeDiscordState.participants.find((user) => user.id === mazeDiscordState.user.id);
 		if (refreshed != null) {
@@ -485,6 +542,7 @@ async function refreshMazeDiscordParticipants() {
 		const response = await mazeDiscordSdk.commands.getInstanceConnectedParticipants();
 		updateMazeDiscordParticipants(response?.participants);
 	} catch (error) {
+		mazeDiscordDebugLog('warn', `Participants Activity KO : ${error instanceof Error ? error.message : error}`);
 		console.debug('Participants Discord Activity indisponibles', error);
 	}
 }
@@ -534,6 +592,7 @@ function mazeDiscordSnapshot() {
 		sessionToken: mazeDiscordState.sessionToken,
 		user: mazeDiscordState.user,
 		participants: mazeDiscordState.participants,
+		logs: mazeDiscordState.logs,
 		error: mazeDiscordState.error,
 	};
 }
@@ -573,8 +632,10 @@ async function refreshMazeDiscordSession() {
 		}
 		mazeDiscordState.authenticated = true;
 		mazeDiscordState.user = payload.user ?? null;
+		mazeDiscordDebugLog('ok', 'Session Discord restaurée');
 		mazeDiscordState.error = '';
 	} catch (error) {
+		mazeDiscordDebugLog('warn', `Session Discord KO : ${error instanceof Error ? error.message : error}`);
 		console.debug('Session Discord Activity indisponible', error);
 	}
 }
@@ -585,6 +646,7 @@ async function initMazeDiscord() {
 	}
 	mazeDiscordInitPromise = (async () => {
 		try {
+			mazeDiscordDebugLog('discord', 'Initialisation du bridge Discord');
 			const hostClientId = mazeDiscordClientIdFromHost();
 			let config = {};
 			try {
@@ -593,36 +655,47 @@ async function initMazeDiscord() {
 				if (!hostClientId) {
 					throw error;
 				}
+				mazeDiscordDebugLog('warn', `Config serveur indisponible : ${error instanceof Error ? error.message : error}`);
 				console.debug('Configuration serveur Discord indisponible, utilisation du client id Activity', error);
 			}
 			mazeDiscordState.clientId = typeof config.clientId === 'string' && config.clientId
 				? config.clientId
 				: hostClientId;
 			mazeDiscordState.enabled = Boolean(config.enabled || mazeDiscordState.clientId);
+			mazeDiscordDebugLog(
+				mazeDiscordState.enabled ? 'ok' : 'warn',
+				`Config Discord ${mazeDiscordState.enabled ? 'OK' : 'absente'}`
+			);
 			setMazeDiscordSessionToken(window.sessionStorage.getItem(DISCORD_ACTIVITY_SESSION_KEY) || '');
 			await refreshMazeDiscordSession();
 			mazeDiscordState.isActivity = shouldUseDiscordActivityFlow()
 				&& mazeDiscordState.enabled
 				&& !!mazeDiscordState.clientId;
 			if (!mazeDiscordState.isActivity) {
+				mazeDiscordDebugLog('info', 'Pas de flux Activity Discord actif');
 				return;
 			}
+			mazeDiscordDebugLog('discord', 'Import SDK Discord');
 			const { DiscordSDK } = await import(mazeApiUrl('/vendor/discord-embedded-app-sdk.mjs'));
 			mazeDiscordSdk = new DiscordSDK(mazeDiscordState.clientId);
 			void mazeDiscordSdk.subscribe('READY', (payload) => {
+				mazeDiscordDebugLog('discord', 'Event READY Discord');
 				setMazeDiscordActivityUser(payload?.user);
 			});
 			await mazeDiscordSdk.ready();
 			mazeDiscordState.sdkReady = true;
+			mazeDiscordDebugLog('ok', 'SDK Discord prêt');
 			await refreshMazeDiscordParticipants();
 			void mazeDiscordSdk.subscribe('ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE', (payload) => {
 				updateMazeDiscordParticipants(payload?.participants);
 			}).catch((error) => {
+				mazeDiscordDebugLog('warn', `Subscribe participants KO : ${error instanceof Error ? error.message : error}`);
 				console.debug('Abonnement participants Discord Activity impossible', error);
 			});
 			mazeDiscordState.error = '';
 		} catch (error) {
 			mazeDiscordState.error = error instanceof Error ? error.message : 'Discord Activity indisponible.';
+			mazeDiscordDebugLog('error', `Discord init KO : ${mazeDiscordState.error}`);
 			mazeDiscordState.sdkReady = false;
 		} finally {
 			mazeDiscordState.initComplete = true;
@@ -645,6 +718,7 @@ async function authenticateMazeDiscord(scopes = ['identify'], state = 'maze-acti
 	mazeDiscordState.loginInFlight = true;
 	mazeDiscordState.error = '';
 	try {
+		mazeDiscordDebugLog('discord', `Authorize Discord scopes: ${scopes.join(', ')}`);
 		const { code } = await mazeDiscordSdk.commands.authorize({
 			client_id: mazeDiscordState.clientId,
 			response_type: 'code',
@@ -668,6 +742,10 @@ async function authenticateMazeDiscord(scopes = ['identify'], state = 'maze-acti
 		setMazeDiscordActivityUser(payload.user);
 		mazeDiscordState.activityScopeReady = Array.isArray(auth.scopes)
 			&& auth.scopes.includes('rpc.activities.write');
+		mazeDiscordDebugLog(
+			mazeDiscordState.activityScopeReady ? 'ok' : 'warn',
+			`Authenticate Discord OK${mazeDiscordState.activityScopeReady ? ' + Rich Presence' : ''}`
+		);
 		mazeDiscordState.error = '';
 		return auth;
 	} finally {
@@ -683,6 +761,7 @@ async function loginMazeDiscord() {
 		mazeDiscordState.user = null;
 		mazeDiscordState.activityScopeReady = false;
 		mazeDiscordState.error = error instanceof Error ? error.message : 'Connexion Discord impossible.';
+		mazeDiscordDebugLog('error', `Login Discord KO : ${mazeDiscordState.error}`);
 		console.error(error);
 	}
 }
@@ -710,9 +789,11 @@ async function setMazeDiscordActivity(payload) {
 		mazeDiscordState.activityUpdateInFlight = true;
 		await mazeDiscordSdk.commands.setActivity({ activity });
 		mazeDiscordState.lastActivitySignature = signature;
+		mazeDiscordDebugLog('ok', 'Rich Presence mise à jour');
 		mazeDiscordState.error = '';
 	} catch (error) {
 		mazeDiscordState.error = error instanceof Error ? error.message : 'Rich Presence Discord indisponible.';
+		mazeDiscordDebugLog('warn', `Rich Presence KO : ${mazeDiscordState.error}`);
 		console.debug('Mise a jour de la Rich Presence Discord impossible', error);
 	} finally {
 		mazeDiscordState.activityUpdateInFlight = false;
@@ -720,6 +801,7 @@ async function setMazeDiscordActivity(payload) {
 }
 
 function logoutMazeDiscord() {
+	mazeDiscordDebugLog('discord', 'Déconnexion Discord demandée');
 	setMazeDiscordSessionToken('');
 	mazeDiscordState.authenticated = false;
 	mazeDiscordState.user = null;
