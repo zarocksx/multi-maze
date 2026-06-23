@@ -118,6 +118,33 @@ test("un WebSocket Activity authentifie via query string utilise le profil Disco
   assert.equal(room.players[0].discord, true);
 });
 
+test("un profil Activity non authentifie fournit pseudo et avatar d'affichage", async (context) => {
+  const server = createGameServer();
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const connection = await connect(`ws://127.0.0.1:${address.port}/ws`);
+  context.after(() => connection.socket.terminate());
+  await connection.hello;
+  const roomMessage = waitForMessage(connection.socket, "room");
+  connection.socket.send(JSON.stringify({
+    type: "create",
+    name: "Nom local",
+    discordActivityUser: {
+      id: "333333333333333333",
+      username: "activity_display",
+      displayName: "Profil Activity",
+      avatar: "activityhash",
+    },
+  }));
+  const room = await roomMessage;
+  assert.equal(room.players[0].name, "Profil Activity");
+  assert.equal(room.players[0].discord, true);
+  assert.equal(
+    room.players[0].avatarUrl,
+    "/api/discord/avatar/333333333333333333/activityhash.png",
+  );
+});
+
 test("le callback OAuth Discord crée une session HTTP utilisable par le jeu", async (context) => {
   const discordConfig = {
     clientId: "client-id",

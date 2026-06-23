@@ -17,6 +17,7 @@ var discord_user: Dictionary = {}
 var discord_session_token := ""
 var discord_activity_mode := false
 var discord_activity_ready := false
+var discord_activity_scope_ready := false
 var discord_login_pending := false
 var discord_bridge_error := ""
 var discord_bridge_poll_timer := 0.0
@@ -738,6 +739,7 @@ func _sync_discord_bridge_state(force_refresh: bool = false) -> void:
 	var was_activity_ready := discord_activity_ready
 	discord_activity_mode = bool(state.get("isActivity", false))
 	discord_activity_ready = bool(state.get("sdkReady", false))
+	discord_activity_scope_ready = bool(state.get("activityScopeReady", false))
 	discord_login_pending = bool(state.get("loginInFlight", false))
 	discord_bridge_error = str(state.get("error", ""))
 	if discord_activity_mode != was_activity_mode or discord_activity_ready != was_activity_ready:
@@ -747,9 +749,8 @@ func _sync_discord_bridge_state(force_refresh: bool = false) -> void:
 	discord_session_token = next_session_token
 	if discord_activity_mode:
 		var bridge_user = state.get("user", {})
-		if bool(state.get("authenticated", false)) and bridge_user is Dictionary:
+		if bridge_user is Dictionary and not bridge_user.is_empty():
 			discord_user = bridge_user
-			discord_login_pending = false
 		else:
 			discord_user = {}
 		_refresh_discord_controls(bool(state.get("enabled", false)))
@@ -772,6 +773,7 @@ func _update_discord_bridge(delta: float) -> void:
 
 func _mark_discord_presence_dirty() -> void:
 	discord_presence_dirty = true
+	discord_presence_refresh_timer = 0.0
 
 
 func _update_discord_presence(delta: float) -> void:
@@ -874,18 +876,15 @@ func _check_discord_session() -> void:
 
 
 func _on_discord_pressed() -> void:
+	if _should_use_discord_activity_flow():
+		discord_button.disabled = true
+		discord_status_label.text = "Autorisation Discord..."
+		discord_login_pending = true
+		JavaScriptBridge.eval(
+			"window.mazeDiscord && window.mazeDiscord.beginLogin && window.mazeDiscord.beginLogin()"
+		)
+		return
 	if not discord_user.is_empty():
-		if _should_use_discord_activity_flow():
-			discord_button.disabled = true
-			JavaScriptBridge.eval(
-				"window.mazeDiscord && window.mazeDiscord.logout && window.mazeDiscord.logout()"
-			)
-			discord_user = {}
-			discord_session_token = ""
-			_refresh_discord_controls(true)
-			_mark_discord_presence_dirty()
-			status_label.text = "Compte Discord déconnecté."
-			return
 		auth_request_action = "logout"
 		discord_button.disabled = true
 		var error := auth_request.request(
@@ -899,14 +898,6 @@ func _on_discord_pressed() -> void:
 		return
 	discord_button.disabled = true
 	discord_status_label.text = "Ouverture de Discord…"
-	if _should_use_discord_activity_flow():
-		discord_button.disabled = true
-		discord_status_label.text = "Autorisation Discord..."
-		discord_login_pending = true
-		JavaScriptBridge.eval(
-			"window.mazeDiscord && window.mazeDiscord.beginLogin && window.mazeDiscord.beginLogin()"
-		)
-		return
 	JavaScriptBridge.eval("window.location.assign('/auth/discord')")
 
 
@@ -941,6 +932,44 @@ func _on_auth_request_completed(
 
 
 func _refresh_discord_controls(enabled: bool) -> void:
+	if _should_use_discord_activity_flow():
+		if not discord_user.is_empty():
+			var activity_display_name := str(discord_user.get("displayName", "Joueur Discord"))
+			name_input.text = activity_display_name.left(16)
+			name_input.editable = false
+			name_input.tooltip_text = "Le profil Discord de l’Activity est utilisé automatiquement."
+			discord_status_label.add_theme_color_override("font_color", Color("79e36a"))
+			discord_status_label.text = "Activity : %s" % activity_display_name
+			if discord_login_pending:
+				discord_button.text = "Connexion Discord..."
+				discord_button.disabled = true
+			elif discord_activity_scope_ready:
+				discord_button.text = "Rich Presence active"
+				discord_button.disabled = true
+			elif discord_activity_ready:
+				discord_button.text = "Activer Rich Presence"
+				discord_button.disabled = false
+			else:
+				discord_button.text = "Discord Activity"
+				discord_button.disabled = true
+			return
+		name_input.editable = true
+		name_input.tooltip_text = ""
+		discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
+		if not enabled:
+			discord_button.text = "Discord non configuré"
+			discord_button.disabled = true
+			discord_status_label.text = "Configuration serveur requise"
+		elif not discord_activity_ready:
+			discord_button.text = "Discord Activity"
+			discord_button.disabled = true
+			discord_status_label.text = "Récupération du profil Discord..."
+		else:
+			discord_button.text = "Activer Rich Presence"
+			discord_button.disabled = false
+			discord_status_label.text = "Profil Activity en attente"
+		return
+
 	if not discord_user.is_empty():
 		var display_name := str(discord_user.get("displayName", "Joueur Discord"))
 		discord_button.text = "Se déconnecter"
@@ -953,25 +982,6 @@ func _refresh_discord_controls(enabled: bool) -> void:
 		return
 	name_input.editable = true
 	name_input.tooltip_text = ""
-	if _should_use_discord_activity_flow():
-		discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
-		if not enabled:
-			discord_button.text = "Discord non configuré"
-			discord_button.disabled = true
-			discord_status_label.text = "Configuration serveur requise"
-		elif not discord_activity_ready:
-			discord_button.text = "Discord Activity"
-			discord_button.disabled = true
-			discord_status_label.text = "Initialisation Discord..."
-		elif discord_login_pending:
-			discord_button.text = "Connexion Discord..."
-			discord_button.disabled = true
-			discord_status_label.text = "Autorisation en cours"
-		else:
-			discord_button.text = "Se connecter avec Discord"
-			discord_button.disabled = false
-			discord_status_label.text = "Présence riche et avatar"
-		return
 	discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
 	if enabled:
 		discord_button.text = "Se connecter avec Discord"
@@ -2535,7 +2545,9 @@ func _on_create_pressed() -> void:
 	if player_name.is_empty():
 		return
 	_play_tone(330.0, 0.08, 0.06)
-	_connect_and_send({"type": "create", "name": player_name})
+	var message := {"type": "create", "name": player_name}
+	_add_discord_activity_user(message)
+	_connect_and_send(message)
 
 
 func _on_join_pressed() -> void:
@@ -2547,7 +2559,20 @@ func _on_join_pressed() -> void:
 		status_label.text = "Le code du salon doit contenir 4 caractères."
 		return
 	_play_tone(392.0, 0.08, 0.06)
-	_connect_and_send({"type": "join", "room": code, "name": player_name})
+	var message := {"type": "join", "room": code, "name": player_name}
+	_add_discord_activity_user(message)
+	_connect_and_send(message)
+
+
+func _add_discord_activity_user(message: Dictionary) -> void:
+	if not _should_use_discord_activity_flow() or discord_user.is_empty():
+		return
+	var profile := {}
+	for key in ["id", "username", "displayName", "global_name", "discriminator", "avatar", "defaultAvatar"]:
+		if discord_user.has(key):
+			profile[key] = discord_user[key]
+	if not profile.is_empty():
+		message["discordActivityUser"] = profile
 
 
 func _player_name() -> String:

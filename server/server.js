@@ -148,6 +148,26 @@ function discordAvatarUrl(user) {
   return `/api/discord/avatar/default/${index}.png`;
 }
 
+function discordActivityUserFromMessage(message) {
+  const user = message?.discordActivityUser;
+  if (!user || typeof user !== "object") return null;
+  const id = String(user.id || "");
+  if (!/^\d+$/.test(id)) return null;
+  const avatar = typeof user.avatar === "string" && /^[a-zA-Z0-9_]+$/.test(user.avatar)
+    ? user.avatar
+    : "";
+  const defaultAvatar = /^[0-5]$/.test(String(user.defaultAvatar ?? user.default_avatar ?? ""))
+    ? String(user.defaultAvatar ?? user.default_avatar)
+    : "0";
+  return {
+    id,
+    username: String(user.username || "Joueur Discord").slice(0, 32),
+    displayName: String(user.displayName || user.global_name || user.username || "Joueur Discord").slice(0, 32),
+    avatar,
+    defaultAvatar,
+  };
+}
+
 function normalizeMazeScale(value) {
   const scale = Math.round(Number(value) || DEFAULT_MAZE_SCALE);
   return Math.max(MIN_MAZE_SCALE, Math.min(MAX_MAZE_SCALE, scale));
@@ -290,7 +310,7 @@ function publicPlayer(player, now) {
     name: player.name,
     color: player.color,
     avatarUrl: player.avatarUrl || "",
-    discord: Boolean(player.discordUserId),
+    discord: Boolean(player.discordUserId || player.discordActivityUserId),
     x: player.x,
     y: player.y,
     finished: Boolean(player.finishedAt),
@@ -1023,18 +1043,20 @@ function createGameServer({
     broadcast(room, stateMessage(room));
   }
 
-  function addPlayer(room, socket, requestedName) {
+  function addPlayer(room, socket, requestedName, activityUser = null) {
     const start = room.maze.start;
     const discordUser = socket.discordUser;
+    const displayUser = discordUser || activityUser;
     const player = {
       id: socket.id,
       socket,
-      name: discordUser
-        ? sanitizeName(discordUser.displayName || discordUser.username, room.players.size + 1)
+      name: displayUser
+        ? sanitizeName(displayUser.displayName || displayUser.username, room.players.size + 1)
         : sanitizeName(requestedName, room.players.size + 1),
       color: COLORS[room.players.size % COLORS.length],
       discordUserId: discordUser?.id || "",
-      avatarUrl: discordAvatarUrl(discordUser),
+      discordActivityUserId: discordUser ? "" : (activityUser?.id || ""),
+      avatarUrl: discordAvatarUrl(displayUser),
       x: start.x,
       y: start.y,
       lastMoveAt: 0,
@@ -1084,7 +1106,7 @@ function createGameServer({
         podium: [],
       };
       rooms.set(code, room);
-      addPlayer(room, socket, message.name);
+      addPlayer(room, socket, message.name, discordActivityUserFromMessage(message));
       recordAnalytics("room_created", {
         players: room.players.size,
         mazeScale: room.mazeScale,
@@ -1109,7 +1131,7 @@ function createGameServer({
         return;
       }
       leaveRoom(socket);
-      addPlayer(room, socket, message.name);
+      addPlayer(room, socket, message.name, discordActivityUserFromMessage(message));
       recordAnalytics("room_joined", {
         players: room.players.size,
         mazeScale: room.mazeScale,
