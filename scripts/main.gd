@@ -638,6 +638,9 @@ func _default_server_url() -> String:
 	if OS.has_feature("web"):
 		var javascript := (
 			"(function(){"
+			+ "if (window.mazeDiscord && window.mazeDiscord.getWebSocketUrl) {"
+			+ " return window.mazeDiscord.getWebSocketUrl();"
+			+ "}"
 			+ "const explicit = window.mazeDiscord && window.mazeDiscord.getServerBaseUrl"
 			+ " ? window.mazeDiscord.getServerBaseUrl() : window.location.origin;"
 			+ "const url = new URL(explicit);"
@@ -742,14 +745,17 @@ func _sync_discord_bridge_state(force_refresh: bool = false) -> void:
 	var next_session_token := str(state.get("sessionToken", ""))
 	var session_changed := next_session_token != discord_session_token
 	discord_session_token = next_session_token
-	if discord_activity_mode and (session_changed or force_refresh):
-		if discord_session_token.is_empty():
-			discord_user = {}
-			_refresh_discord_controls(bool(state.get("enabled", false)))
+	if discord_activity_mode:
+		var bridge_user = state.get("user", {})
+		if bool(state.get("authenticated", false)) and bridge_user is Dictionary:
+			discord_user = bridge_user
+			discord_login_pending = false
 		else:
-			_request_discord_session_check()
-	elif discord_activity_mode and discord_user.is_empty():
+			discord_user = {}
 		_refresh_discord_controls(bool(state.get("enabled", false)))
+		if session_changed or force_refresh:
+			_mark_discord_presence_dirty()
+		return
 
 
 func _update_discord_bridge(delta: float) -> void:
@@ -862,6 +868,8 @@ func _check_discord_session() -> void:
 		return
 	JavaScriptBridge.eval("window.mazeDiscord && window.mazeDiscord.init && window.mazeDiscord.init()")
 	_sync_discord_bridge_state(true)
+	if _should_use_discord_activity_flow():
+		return
 	_request_discord_session_check()
 
 
@@ -908,7 +916,11 @@ func _on_auth_request_completed(
 	_headers: PackedStringArray,
 	body: PackedByteArray
 ) -> void:
-	var payload = JSON.parse_string(body.get_string_from_utf8())
+	var raw_body := body.get_string_from_utf8().strip_edges()
+	if not raw_body.begins_with("{"):
+		_show_discord_unavailable()
+		return
+	var payload = JSON.parse_string(raw_body)
 	if response_code != 200 or not payload is Dictionary:
 		_show_discord_unavailable()
 		return

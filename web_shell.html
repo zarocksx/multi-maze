@@ -153,6 +153,7 @@ const mazeDiscordState = {
 	activityScopeReady: false,
 	activityUpdateInFlight: false,
 	lastActivitySignature: '',
+	apiBasePath: '',
 	sessionToken: '',
 	user: null,
 	error: '',
@@ -179,11 +180,66 @@ function shouldUseDiscordActivityFlow() {
 }
 
 function getMazeServerBaseUrl() {
-	return window.location.origin;
+	return window.location.origin + mazeDiscordState.apiBasePath;
 }
 
-function mazeApiUrl(path) {
-	return getMazeServerBaseUrl() + path;
+function mazeApiUrl(path, basePath = mazeDiscordState.apiBasePath) {
+	return window.location.origin + basePath + path;
+}
+
+function getMazeWebSocketUrl() {
+	const url = new URL(getMazeServerBaseUrl());
+	url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+	url.pathname = (mazeDiscordState.apiBasePath + '/ws').replace(/\/+/g, '/');
+	url.search = '';
+	url.hash = '';
+	return url.toString();
+}
+
+function mazeApiBasePathFromUrl(url, path) {
+	const pathname = new URL(url, window.location.origin).pathname;
+	if (!pathname.endsWith(path)) {
+		return '';
+	}
+	return pathname.slice(0, -path.length);
+}
+
+function mazeApiCandidates(path) {
+	const candidates = [
+		mazeDiscordState.apiBasePath,
+		'',
+		'/.proxy',
+	].filter((value, index, values) => values.indexOf(value) === index);
+	return candidates.map((basePath) => ({
+		basePath,
+		url: mazeApiUrl(path, basePath),
+	}));
+}
+
+async function fetchMazeDiscordJson(path, init = {}) {
+	let lastError = null;
+	for (const candidate of mazeApiCandidates(path)) {
+		try {
+			const response = await fetch(candidate.url, init);
+			const text = await response.text();
+			let payload = null;
+			try {
+				payload = text ? JSON.parse(text) : {};
+			} catch {
+				lastError = new Error('Reponse non JSON depuis ' + candidate.url);
+				continue;
+			}
+			if (!response.ok) {
+				lastError = new Error(payload?.error || 'Erreur HTTP ' + response.status);
+				continue;
+			}
+			mazeDiscordState.apiBasePath = mazeApiBasePathFromUrl(candidate.url, path);
+			return { response, payload };
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	throw lastError || new Error('API Discord Activity indisponible.');
 }
 
 function mazePresenceText(value, fallback, maxLength = 128) {
@@ -236,6 +292,7 @@ function mazeDiscordSnapshot() {
 		authenticated: mazeDiscordState.authenticated,
 		activityScopeReady: mazeDiscordState.activityScopeReady,
 		activityUpdateInFlight: mazeDiscordState.activityUpdateInFlight,
+		apiBasePath: mazeDiscordState.apiBasePath,
 		sessionToken: mazeDiscordState.sessionToken,
 		user: mazeDiscordState.user,
 		error: mazeDiscordState.error,
@@ -252,11 +309,8 @@ function setMazeDiscordSessionToken(token) {
 }
 
 async function fetchMazeDiscordConfig() {
-	const response = await fetch(mazeApiUrl('/api/auth/discord/config'), { cache: 'no-store' });
-	if (!response.ok) {
-		throw new Error('Configuration Discord indisponible.');
-	}
-	return response.json();
+	const { payload } = await fetchMazeDiscordJson('/api/auth/discord/config', { cache: 'no-store' });
+	return payload;
 }
 
 async function refreshMazeDiscordSession() {
@@ -266,14 +320,13 @@ async function refreshMazeDiscordSession() {
 		return;
 	}
 	try {
-		const response = await fetch(mazeApiUrl('/api/auth/me'), {
+		const { payload } = await fetchMazeDiscordJson('/api/auth/me', {
 			cache: 'no-store',
 			headers: {
 				Authorization: 'Bearer ' + mazeDiscordState.sessionToken,
 			},
 		});
-		const payload = await response.json();
-		if (!response.ok || !payload.authenticated) {
+		if (!payload.authenticated) {
 			setMazeDiscordSessionToken('');
 			mazeDiscordState.authenticated = false;
 			mazeDiscordState.user = null;
@@ -340,15 +393,11 @@ async function authenticateMazeDiscord(scopes = ['identify'], state = 'maze-acti
 			prompt: 'none',
 			scope: scopes,
 		});
-		const response = await fetch(mazeApiUrl('/api/auth/discord/activity'), {
+		const { payload } = await fetchMazeDiscordJson('/api/auth/discord/activity', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ code }),
 		});
-		const payload = await response.json().catch(() => ({}));
-		if (!response.ok) {
-			throw new Error(payload.error || 'Connexion Discord impossible.');
-		}
 		const auth = await mazeDiscordSdk.commands.authenticate({
 			access_token: payload.access_token,
 		});
@@ -440,7 +489,7 @@ function logoutMazeDiscord() {
 	mazeDiscordState.activityScopeReady = false;
 	mazeDiscordState.lastActivitySignature = '';
 	mazeDiscordState.error = '';
-	void fetch(mazeApiUrl('/api/auth/logout'), {
+	void fetchMazeDiscordJson('/api/auth/logout', {
 		method: 'POST',
 		cache: 'no-store',
 	}).catch((error) => {
@@ -463,6 +512,9 @@ window.mazeDiscord = {
 	},
 	getServerBaseUrl() {
 		return getMazeServerBaseUrl();
+	},
+	getWebSocketUrl() {
+		return getMazeWebSocketUrl();
 	},
 	getStateJson() {
 		return JSON.stringify(mazeDiscordSnapshot());
