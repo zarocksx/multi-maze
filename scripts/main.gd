@@ -101,6 +101,7 @@ var wall_shake_enabled := true
 var touchscreen_available := false
 var touch_controls: PanelContainer
 var touch_direction := ""
+var gamepad_focus_locked := false
 
 
 func _ready() -> void:
@@ -1092,6 +1093,7 @@ func _process(delta: float) -> void:
 	_update_music(delta)
 	_update_race_hud()
 	_update_player_tooltip()
+	_sync_gamepad_focus_lock()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1104,6 +1106,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	else:
 		return
 
+	if _should_lock_gamepad_focus():
+		_release_gamepad_focus()
+		return
+
 	if get_viewport().gui_get_focus_owner() != null:
 		return
 	if score_restart_button.is_visible_in_tree():
@@ -1114,6 +1120,44 @@ func _unhandled_input(event: InputEvent) -> void:
 		create_button.grab_focus()
 	elif copy_button.is_visible_in_tree():
 		copy_button.grab_focus()
+
+
+func _should_lock_gamepad_focus() -> bool:
+	return (
+		not room_code.is_empty()
+		and not race_complete
+		and (race_phase == "countdown" or race_phase == "running")
+	)
+
+
+func _sync_gamepad_focus_lock() -> void:
+	var should_lock := _should_lock_gamepad_focus()
+	if should_lock != gamepad_focus_locked:
+		gamepad_focus_locked = should_lock
+		var next_focus_mode := Control.FOCUS_NONE if should_lock else Control.FOCUS_ALL
+		_set_focus_mode_if_valid(discord_button, next_focus_mode)
+		_set_focus_mode_if_valid(name_input, next_focus_mode)
+		_set_focus_mode_if_valid(create_button, next_focus_mode)
+		_set_focus_mode_if_valid(room_input, next_focus_mode)
+		_set_focus_mode_if_valid(join_button, next_focus_mode)
+		_set_focus_mode_if_valid(copy_button, next_focus_mode)
+		_set_focus_mode_if_valid(start_race_button, next_focus_mode)
+		_set_focus_mode_if_valid(maze_size_slider, next_focus_mode)
+		_set_focus_mode_if_valid(score_restart_button, next_focus_mode)
+		_set_focus_mode_if_valid(wall_shake_toggle, next_focus_mode)
+	if should_lock:
+		_release_gamepad_focus()
+
+
+func _set_focus_mode_if_valid(control: Control, focus_mode: int) -> void:
+	if is_instance_valid(control):
+		control.focus_mode = focus_mode
+
+
+func _release_gamepad_focus() -> void:
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner is Control:
+		focus_owner.release_focus()
 
 
 func _update_network() -> void:
@@ -1259,6 +1303,7 @@ func _refresh_room_controls() -> void:
 	maze_size_controls.visible = is_host_waiting
 	waiting_label.visible = is_in_room and race_phase == "waiting" and host_id != player_id
 	_refresh_touch_controls()
+	_sync_gamepad_focus_lock()
 	if is_in_room:
 		if winner_id.is_empty():
 			copy_button.text = "Copier le code  •  %s" % room_code
@@ -1603,7 +1648,8 @@ func _try_send_move(direction: String) -> void:
 		_send_json({"type": "move", "direction": direction})
 	elif wall_hit_timer <= 0.0:
 		wall_hit_timer = 0.16
-		_play_tone(95.0, 0.09, 0.11, "noise")
+		if wall_shake_enabled:
+			_play_tone(95.0, 0.09, 0.11, "noise")
 
 
 func _can_local_player_move(direction: String) -> bool:
