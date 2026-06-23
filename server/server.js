@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { WebSocketServer, WebSocket } = require("ws");
+const { createAnalyticsStore } = require("./supabase-analytics-store");
 
 const WALL_TOP = 1;
 const WALL_RIGHT = 2;
@@ -42,6 +43,9 @@ const DIRECTIONS = {
 const AUTH_COOKIE = "maze_discord_session";
 const OAUTH_STATE_COOKIE = "maze_discord_oauth_state";
 const AUTH_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const ANALYTICS_CONSENT_COOKIE = "maze_analytics_consent";
+const ANALYTICS_ID_COOKIE = "maze_analytics_id";
+const ANALYTICS_COOKIE_MAX_AGE_S = 180 * 24 * 60 * 60;
 
 function parseCookies(header = "") {
   return String(header).split(";").reduce((cookies, part) => {
@@ -58,6 +62,45 @@ function parseCookies(header = "") {
     }
     return cookies;
   }, {});
+}
+
+function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 32_768) {
+        reject(new Error("Corps de requête trop volumineux."));
+      }
+    });
+    request.on("end", () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new Error("JSON invalide."));
+      }
+    });
+    request.on("error", reject);
+  });
+}
+
+function cookieValue(value) {
+  return encodeURIComponent(String(value));
+}
+
+function isDoNotTrackEnabled(request) {
+  const dnt = String(request.headers.dnt || request.headers["sec-gpc"] || "").trim();
+  return dnt === "1" || dnt.toLowerCase() === "yes";
+}
+
+function requestPathForAnalytics(requestUrl) {
+  const pathname = requestUrl.pathname || "/";
+  if (pathname.length > 120) return pathname.slice(0, 120);
+  return pathname;
 }
 
 function signValue(value, secret) {
@@ -482,7 +525,9 @@ function resetRoom(room, nextMaze = null) {
 
 function createGameServer({
   webRoot = path.resolve(__dirname, "..", "web"),
+  analyticsWebRoot = path.resolve(__dirname, "..", "analytics-dashboard"),
   discordConfig = {},
+  analyticsConfig = {},
   fetchImpl = globalThis.fetch,
 } = {}) {
   const rooms = new Map();
@@ -494,6 +539,21 @@ function createGameServer({
     sessionSecret: discordConfig.sessionSecret ?? process.env.AUTH_SESSION_SECRET ?? process.env.DISCORD_CLIENT_SECRET ?? "",
   };
   auth.enabled = Boolean(auth.clientId && auth.clientSecret && auth.redirectUri && auth.sessionSecret);
+
+  const analytics = {
+    enabled: analyticsConfig.enabled ?? process.env.ANALYTICS_ENABLED !== "false",
+    dashboardToken: analyticsConfig.dashboardToken ?? process.env.ANALYTICS_DASHBOARD_TOKEN ?? "",
+    consentRequired: analyticsConfig.consentRequired ?? true,
+  };
+  analytics.store = createAnalyticsStore({
+    storagePath: analyticsConfig.storagePath ?? path.resolve(__dirname, "data", "analytics.json"),
+    retentionDays: analyticsConfig.retentionDays ?? Number(process.env.ANALYTICS_RETENTION_DAYS || 30),
+    salt: analyticsConfig.salt ?? process.env.ANALYTICS_SALT ?? auth.sessionSecret ?? "maze-analytics-salt",
+    supabaseUrl: analyticsConfig.supabaseUrl ?? process.env.SUPABASE_URL ?? "",
+    serviceRoleKey: analyticsConfig.serviceRoleKey ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+    table: analyticsConfig.table ?? process.env.SUPABASE_ANALYTICS_TABLE ?? "analytics_events",
+    fetchImpl,
+  });
 
   function securityHeaders(extra = {}) {
     return {
@@ -527,6 +587,83 @@ function createGameServer({
     return readAuthSession(parseCookies(request.headers.cookie)[AUTH_COOKIE], auth.sessionSecret);
   }
 
+  function analyticsConsent(request) {
+    const consent = parseCookies(request.headers.cookie)[ANALYTICS_CONSENT_COOKIE];
+    if (consent === "granted" || consent === "denied") return consent;
+    return "unknown";
+  }
+
+  function analyticsSessionId(request) {
+    return parseCookies(request.headers.cookie)[ANALYTICS_ID_COOKIE] || "";
+  }
+
+  function analyticsCookies(request, consent, sessionId = "") {
+    const secure = secureCookie(request) ? "; Secure" : "";
+    const cookies = [
+      `${ANALYTICS_CONSENT_COOKIE}=${cookieValue(consent)}; Path=/; SameSite=Lax; Max-Age=${ANALYTICS_COOKIE_MAX_AGE_S}${secure}`,
+    ];
+    if (consent === "granted" && sessionId) {
+      cookies.push(
+        `${ANALYTICS_ID_COOKIE}=${cookieValue(sessionId)}; Path=/; SameSite=Lax; Max-Age=${ANALYTICS_COOKIE_MAX_AGE_S}${secure}`,
+      );
+    } else {
+      cookies.push(`${ANALYTICS_ID_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0${secure}`);
+    }
+    return cookies;
+  }
+
+  function canTrackWebAnalytics(request) {
+    if (!analytics.enabled) return false;
+    if (isDoNotTrackEnabled(request)) return false;
+    if (!analytics.consentRequired) return true;
+    return analyticsConsent(request) === "granted";
+  }
+
+  function recordAnalytics(type, properties = {}, sessionId = "") {
+    if (!analytics.enabled) return;
+    Promise.resolve(analytics.store.record({ type, properties, sessionId })).catch(() => {});
+  }
+
+  function analyticsAuthorized(request) {
+    if (!analytics.enabled) return false;
+    if (analytics.dashboardToken) {
+      return request.headers["x-analytics-token"] === analytics.dashboardToken;
+    }
+    return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.socket.remoteAddress);
+  }
+
+  function roomAnalyticsSession(room) {
+    return `room:${room.code}:round:${room.round}`;
+  }
+
+  function serveStaticFile(root, relativePath, response, notFoundMessage) {
+    const normalizedPath = path.normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
+    const filePath = path.resolve(root, normalizedPath);
+    if (!filePath.startsWith(path.resolve(root))) {
+      response.writeHead(403).end("Forbidden");
+      return;
+    }
+    fs.readFile(filePath, (error, data) => {
+      if (error) {
+        response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        response.end(notFoundMessage);
+        return;
+      }
+      const mime = {
+        ".html": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "text/javascript; charset=utf-8",
+        ".wasm": "application/wasm",
+        ".pck": "application/octet-stream",
+        ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+      }[path.extname(filePath)] || "application/octet-stream";
+      response.writeHead(200, securityHeaders({ "Content-Type": mime }));
+      response.end(data);
+    });
+  }
+
   async function proxyDiscordAvatar(requestUrl, response) {
     const custom = requestUrl.pathname.match(/^\/api\/discord\/avatar\/(\d+)\/([a-zA-Z0-9_]+)\.png$/);
     const fallback = requestUrl.pathname.match(/^\/api\/discord\/avatar\/default\/([0-5])\.png$/);
@@ -558,6 +695,64 @@ function createGameServer({
 
   async function handleHttpRequest(request, response) {
     const requestUrl = new URL(request.url, "http://localhost");
+
+    if (requestUrl.pathname === "/api/analytics/consent" && request.method === "GET") {
+      sendJson(response, 200, {
+        enabled: analytics.enabled,
+        consentRequired: analytics.consentRequired,
+        consent: analyticsConsent(request),
+        doNotTrack: isDoNotTrackEnabled(request),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/analytics/consent" && request.method === "POST") {
+      const payload = await readJsonBody(request);
+      const consent = isDoNotTrackEnabled(request)
+        ? "denied"
+        : (payload.consent === "granted" ? "granted" : "denied");
+      const sessionId = consent === "granted" ? (analyticsSessionId(request) || crypto.randomUUID()) : "";
+      const headers = { "Set-Cookie": analyticsCookies(request, consent, sessionId) };
+      recordAnalytics("consent_updated", { choice: consent }, consent === "granted" ? sessionId : "");
+      sendJson(response, 200, {
+        enabled: analytics.enabled,
+        consentRequired: analytics.consentRequired,
+        consent,
+        doNotTrack: isDoNotTrackEnabled(request),
+      }, headers);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/analytics/event" && request.method === "POST") {
+      if (!canTrackWebAnalytics(request)) {
+        sendJson(response, 202, { accepted: false, reason: "tracking-disabled" });
+        return;
+      }
+      const payload = await readJsonBody(request);
+      const allowedTypes = new Set(["web_session_started", "web_page_view"]);
+      const type = allowedTypes.has(payload.type) ? payload.type : "";
+      if (!type) {
+        sendJson(response, 400, { error: "Type d'événement analytics invalide." });
+        return;
+      }
+      const sessionId = analyticsSessionId(request);
+      recordAnalytics(type, {
+        path: requestPathForAnalytics(payload.path || "/"),
+      }, sessionId);
+      sendJson(response, 202, { accepted: true });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/analytics/summary" && request.method === "GET") {
+      if (!analyticsAuthorized(request)) {
+        sendJson(response, 401, { error: "Accès analytics non autorisé." });
+        return;
+      }
+      sendJson(response, 200, await analytics.store.summary({
+        days: Number(requestUrl.searchParams.get("days") || 14),
+      }));
+      return;
+    }
 
     if (requestUrl.pathname === "/api/auth/me") {
       const user = sessionUser(request);
@@ -638,6 +833,7 @@ function createGameServer({
         const user = await userResponse.json();
         if (!/^\d+$/.test(String(user.id))) throw new Error("Profil Discord invalide");
         const session = createAuthSession(user, auth.sessionSecret);
+        recordAnalytics("discord_login_success", { provider: "discord" });
         redirect(response, "/?discord=connected", [
           clearState,
           `${AUTH_COOKIE}=${encodeURIComponent(session)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(AUTH_SESSION_MAX_AGE_MS / 1000)}${secure}`,
@@ -650,6 +846,26 @@ function createGameServer({
 
     if (await proxyDiscordAvatar(requestUrl, response)) return;
 
+    if (requestUrl.pathname === "/analytics" || requestUrl.pathname === "/analytics/") {
+      serveStaticFile(
+        analyticsWebRoot,
+        "index.html",
+        response,
+        "Dashboard analytics absent. Ajoutez les fichiers dans analytics-dashboard/.",
+      );
+      return;
+    }
+
+    if (requestUrl.pathname.startsWith("/analytics/")) {
+      serveStaticFile(
+        analyticsWebRoot,
+        requestUrl.pathname.slice("/analytics/".length),
+        response,
+        "Fichier analytics introuvable.",
+      );
+      return;
+    }
+
     const publicPages = {
       "/privacy": "privacy.html",
       "/privacy/": "privacy.html",
@@ -659,30 +875,12 @@ function createGameServer({
     const relativePath = requestUrl.pathname === "/"
       ? "index.html"
       : (publicPages[requestUrl.pathname] || requestUrl.pathname.slice(1));
-    const normalizedPath = path.normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
-    const filePath = path.resolve(webRoot, normalizedPath);
-    if (!filePath.startsWith(path.resolve(webRoot))) {
-      response.writeHead(403).end("Forbidden");
-      return;
-    }
-    fs.readFile(filePath, (error, data) => {
-      if (error) {
-        response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-        response.end("Export Godot absent. Placez les fichiers HTML5 dans le dossier web/.");
-        return;
-      }
-      const mime = {
-        ".html": "text/html; charset=utf-8",
-        ".js": "text/javascript; charset=utf-8",
-        ".wasm": "application/wasm",
-        ".pck": "application/octet-stream",
-        ".png": "image/png",
-        ".svg": "image/svg+xml",
-        ".ico": "image/x-icon",
-      }[path.extname(filePath)] || "application/octet-stream";
-      response.writeHead(200, securityHeaders({ "Content-Type": mime }));
-      response.end(data);
-    });
+    serveStaticFile(
+      webRoot,
+      relativePath,
+      response,
+      "Export Godot absent. Placez les fichiers HTML5 dans le dossier web/.",
+    );
   }
 
   const httpServer = http.createServer((request, response) => {
@@ -782,6 +980,10 @@ function createGameServer({
       };
       rooms.set(code, room);
       addPlayer(room, socket, message.name);
+      recordAnalytics("room_created", {
+        players: room.players.size,
+        mazeScale: room.mazeScale,
+      }, roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
       return;
     }
@@ -803,6 +1005,10 @@ function createGameServer({
       }
       leaveRoom(socket);
       addPlayer(room, socket, message.name);
+      recordAnalytics("room_joined", {
+        players: room.players.size,
+        mazeScale: room.mazeScale,
+      }, roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
       return;
     }
@@ -815,7 +1021,17 @@ function createGameServer({
     }
 
     if (message.type === "move") {
+      const wasComplete = room.complete;
       if (applyMove(room, player, String(message.direction || ""))) {
+        if (!wasComplete && room.complete) {
+          const slowestTimeMs = Math.max(...[...room.players.values()].map((entry) => entry.timeMs || 0));
+          recordAnalytics("race_completed", {
+            players: room.players.size,
+            mazeScale: room.mazeScale,
+            durationMs: slowestTimeMs,
+            round: room.round,
+          }, roomAnalyticsSession(room));
+        }
         broadcast(room, stateMessage(room));
       }
       return;
@@ -837,6 +1053,10 @@ function createGameServer({
       };
       room.chat.push(chatMessage);
       room.chat = room.chat.slice(-CHAT_HISTORY_LIMIT);
+      recordAnalytics("chat_sent", {
+        players: room.players.size,
+        mazeScale: room.mazeScale,
+      }, roomAnalyticsSession(room));
       broadcast(room, chatMessage);
       return;
     }
@@ -850,6 +1070,11 @@ function createGameServer({
       room.phase = "countdown";
       room.startAt = Date.now() + COUNTDOWN_MS;
       room.lastEvent = null;
+      recordAnalytics("race_started", {
+        players: room.players.size,
+        mazeScale: room.mazeScale,
+        round: room.round,
+      }, roomAnalyticsSession(room));
       broadcast(room, stateMessage(room));
       return;
     }
@@ -860,6 +1085,10 @@ function createGameServer({
       if (nextScale === room.mazeScale) return;
       room.mazeScale = nextScale;
       prepareRoomMaze(room, generateScaledMaze(nextScale));
+      recordAnalytics("maze_resized", {
+        players: room.players.size,
+        mazeScale: room.mazeScale,
+      }, roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
       return;
     }
@@ -870,6 +1099,11 @@ function createGameServer({
         return;
       }
       resetRoom(room);
+      recordAnalytics("race_restarted", {
+        players: room.players.size,
+        mazeScale: room.mazeScale,
+        round: room.round,
+      }, roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
     }
   }
@@ -879,6 +1113,7 @@ function createGameServer({
     socket.roomCode = null;
     socket.discordUser = sessionUser(request);
     sockets.set(socket.id, socket);
+    recordAnalytics("socket_connected", { discord: Boolean(socket.discordUser) });
     send(socket, { type: "hello", playerId: socket.id });
     socket.on("message", (raw) => handleMessage(socket, raw));
     socket.on("close", () => {
@@ -890,6 +1125,7 @@ function createGameServer({
 
   return {
     rooms,
+    analyticsStore: analytics.store,
     async start(port = 8080, host = "0.0.0.0") {
       await new Promise((resolve, reject) => {
         httpServer.once("error", reject);

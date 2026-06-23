@@ -1,5 +1,8 @@
 "use strict";
 
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { WebSocket } = require("ws");
@@ -20,6 +23,10 @@ const {
   discordAvatarUrl,
   createGameServer,
 } = require("../server");
+
+function createTempAnalyticsPath() {
+  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "multi-maze-analytics-")), "analytics.json");
+}
 
 function waitForMessage(socket, expectedType) {
   return new Promise((resolve, reject) => {
@@ -420,4 +427,76 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   const countdown = await countdownState;
   assert.equal(countdown.phase, "countdown");
   assert.ok(countdown.startAt > countdown.serverNow);
+});
+
+test("le consentement analytics est explicite et le dashboard est protÃ©gÃ©", async (context) => {
+  const server = createGameServer({
+    analyticsConfig: {
+      storagePath: createTempAnalyticsPath(),
+      dashboardToken: "dashboard-secret",
+    },
+  });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  const initialConsent = await fetch(`${origin}/api/analytics/consent`);
+  assert.equal(initialConsent.status, 200);
+  assert.equal((await initialConsent.json()).consent, "unknown");
+
+  const grant = await fetch(`${origin}/api/analytics/consent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ consent: "granted" }),
+  });
+  assert.equal(grant.status, 200);
+  const grantedCookie = grant.headers.get("set-cookie") || "";
+  assert.match(grantedCookie, /maze_analytics_consent=granted/);
+  assert.match(grantedCookie, /maze_analytics_id=/);
+
+  const deniedSummary = await fetch(`${origin}/api/analytics/summary`);
+  assert.equal(deniedSummary.status, 401);
+
+  const allowedSummary = await fetch(`${origin}/api/analytics/summary`, {
+    headers: { "x-analytics-token": "dashboard-secret" },
+  });
+  assert.equal(allowedSummary.status, 200);
+  const payload = await allowedSummary.json();
+  assert.equal(payload.consent[0].choice, "granted");
+});
+
+test("les analytics de jeu remontent dans le rÃ©sumÃ©", async (context) => {
+  const server = createGameServer({
+    analyticsConfig: {
+      storagePath: createTempAnalyticsPath(),
+    },
+  });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const firstConnection = await connect(url);
+  const secondConnection = await connect(url);
+  const first = firstConnection.socket;
+  const second = secondConnection.socket;
+  context.after(() => first.terminate());
+  context.after(() => second.terminate());
+  await Promise.all([firstConnection.hello, secondConnection.hello]);
+
+  const firstRoom = waitForMessage(first, "room");
+  first.send(JSON.stringify({ type: "create", name: "Bleu" }));
+  const created = await firstRoom;
+
+  const hostUpdate = waitForMessage(first, "room");
+  const secondRoom = waitForMessage(second, "room");
+  second.send(JSON.stringify({ type: "join", room: created.room, name: "Rose" }));
+  await Promise.all([hostUpdate, secondRoom]);
+
+  const countdownState = waitForMessage(first, "state");
+  first.send(JSON.stringify({ type: "start" }));
+  await countdownState;
+
+  const summary = await server.analyticsStore.summary({ days: 14 });
+  assert.equal(summary.overview.roomsCreated, 1);
+  assert.equal(summary.overview.roomJoins, 1);
+  assert.equal(summary.overview.raceStarts, 1);
 });

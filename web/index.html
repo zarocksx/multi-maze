@@ -119,6 +119,66 @@ body {
 	text-align: center;
 	z-index: 1;
 }
+
+#analytics-banner {
+	position: fixed;
+	left: 16px;
+	right: 16px;
+	bottom: 16px;
+	display: none;
+	gap: 14px;
+	align-items: center;
+	justify-content: space-between;
+	padding: 16px 18px;
+	border-radius: 18px;
+	border: 1px solid rgba(131, 232, 255, 0.22);
+	background: rgba(8, 18, 28, 0.94);
+	box-shadow: 0 16px 50px rgba(0, 0, 0, 0.35);
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	z-index: 30;
+}
+
+#analytics-banner p {
+	margin: 0;
+	max-width: 60ch;
+	color: #d6e2f0;
+	line-height: 1.45;
+}
+
+#analytics-banner a {
+	color: #83e8ff;
+}
+
+#analytics-actions {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.analytics-button {
+	border: 0;
+	border-radius: 999px;
+	padding: 12px 16px;
+	font: inherit;
+	cursor: pointer;
+}
+
+.analytics-button.primary {
+	color: #061019;
+	background: #83e8ff;
+}
+
+.analytics-button.secondary {
+	color: #d6e2f0;
+	background: rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 720px) {
+	#analytics-banner {
+		flex-direction: column;
+		align-items: stretch;
+	}
+}
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
@@ -140,12 +200,92 @@ body {
 			</div>
 			<div id="status-notice"></div>
 		</div>
+		<div id="analytics-banner" role="dialog" aria-live="polite" aria-label="Préférences analytics">
+			<p>
+				Nous utilisons une mesure d'audience minimale pour comprendre les sessions, créations de salons et courses terminées.
+				Aucune publicité, aucun traçage cross-site, et les identifiants sont pseudonymisés.
+				<a href="/privacy">En savoir plus</a>.
+			</p>
+			<div id="analytics-actions">
+				<button id="analytics-decline" class="analytics-button secondary" type="button">Refuser</button>
+				<button id="analytics-accept" class="analytics-button primary" type="button">Accepter</button>
+			</div>
+		</div>
 
 		<script src="index.js"></script>
 		<script>
 const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":693984,"index.wasm":43699190},"focusCanvas":true,"gdextensionLibs":[]};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
+
+async function postAnalytics(type) {
+	try {
+		await fetch('/api/analytics/event', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ type, path: window.location.pathname }),
+		});
+	} catch (error) {
+		console.debug('Analytics indisponible', error);
+	}
+}
+
+(async function () {
+	const banner = document.getElementById('analytics-banner');
+	const acceptButton = document.getElementById('analytics-accept');
+	const declineButton = document.getElementById('analytics-decline');
+	let consentState = { enabled: false, consent: 'unknown', doNotTrack: false };
+
+	try {
+		const response = await fetch('/api/analytics/consent', { cache: 'no-store' });
+		if (response.ok) {
+			consentState = await response.json();
+		}
+	} catch (error) {
+		console.debug('Consentement analytics indisponible', error);
+	}
+
+	if (consentState.doNotTrack || !consentState.enabled) {
+		return;
+	}
+
+	async function saveConsent(consent) {
+		try {
+			const response = await fetch('/api/analytics/consent', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ consent }),
+			});
+			if (!response.ok) return;
+			banner.style.display = 'none';
+			if (consent === 'granted') {
+				if (!window.sessionStorage.getItem('maze-analytics-session')) {
+					window.sessionStorage.setItem('maze-analytics-session', '1');
+					await postAnalytics('web_session_started');
+				}
+				await postAnalytics('web_page_view');
+			}
+		} catch (error) {
+			console.debug('Sauvegarde du consentement impossible', error);
+		}
+	}
+
+	acceptButton.addEventListener('click', () => { void saveConsent('granted'); });
+	declineButton.addEventListener('click', () => { void saveConsent('denied'); });
+
+	if (consentState.consent === 'granted') {
+		if (!window.sessionStorage.getItem('maze-analytics-session')) {
+			window.sessionStorage.setItem('maze-analytics-session', '1');
+			await postAnalytics('web_session_started');
+		}
+		await postAnalytics('web_page_view');
+		return;
+	}
+
+	if (consentState.consent === 'unknown') {
+		banner.style.display = 'flex';
+	}
+}());
 
 (function () {
 	const statusOverlay = document.getElementById('status');
