@@ -8,6 +8,7 @@ const WALL_LEFT := 8
 const CELEBRATION_COLORS := ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff"]
 const SETTINGS_PATH := "user://settings.cfg"
 const GAMEPAD_DEADZONE := 0.42
+const MAX_PLAYERS := 8
 
 var socket := WebSocketPeer.new()
 var auth_request: HTTPRequest
@@ -19,6 +20,10 @@ var discord_activity_ready := false
 var discord_login_pending := false
 var discord_bridge_error := ""
 var discord_bridge_poll_timer := 0.0
+var discord_presence_start_unix := 0
+var discord_presence_dirty := true
+var discord_presence_refresh_timer := 0.0
+var discord_presence_last_signature := ""
 var avatar_textures: Dictionary = {}
 var player_id := ""
 var host_id := ""
@@ -726,10 +731,14 @@ func _sync_discord_bridge_state(force_refresh: bool = false) -> void:
 	var state := _discord_bridge_state()
 	if state.is_empty():
 		return
+	var was_activity_mode := discord_activity_mode
+	var was_activity_ready := discord_activity_ready
 	discord_activity_mode = bool(state.get("isActivity", false))
 	discord_activity_ready = bool(state.get("sdkReady", false))
 	discord_login_pending = bool(state.get("loginInFlight", false))
 	discord_bridge_error = str(state.get("error", ""))
+	if discord_activity_mode != was_activity_mode or discord_activity_ready != was_activity_ready:
+		_mark_discord_presence_dirty()
 	var next_session_token := str(state.get("sessionToken", ""))
 	var session_changed := next_session_token != discord_session_token
 	discord_session_token = next_session_token
@@ -751,6 +760,98 @@ func _update_discord_bridge(delta: float) -> void:
 		return
 	discord_bridge_poll_timer = 0.5
 	_sync_discord_bridge_state()
+	if _should_use_discord_activity_flow() and not discord_activity_ready:
+		JavaScriptBridge.eval("window.mazeDiscord && window.mazeDiscord.init && window.mazeDiscord.init()")
+
+
+func _mark_discord_presence_dirty() -> void:
+	discord_presence_dirty = true
+
+
+func _update_discord_presence(delta: float) -> void:
+	if not OS.has_feature("web") or not discord_activity_mode or not discord_activity_ready:
+		return
+	discord_presence_refresh_timer -= delta
+	if discord_presence_refresh_timer > 0.0:
+		return
+	if discord_presence_start_unix <= 0:
+		discord_presence_start_unix = int(Time.get_unix_time_from_system())
+	var was_dirty := discord_presence_dirty
+	var payload := _discord_presence_payload()
+	var signature := JSON.stringify(payload)
+	if was_dirty or signature != discord_presence_last_signature or discord_presence_refresh_timer <= 0.0:
+		discord_presence_last_signature = signature
+		_send_discord_presence(payload)
+	discord_presence_dirty = false
+	discord_presence_refresh_timer = 4.0 if was_dirty else 30.0
+
+
+func _discord_presence_payload() -> Dictionary:
+	var details := "Dans le lobby"
+	var state := "Prêt pour une nouvelle course"
+	var small_text := "Lobby"
+	var player_count := players.size()
+
+	if not room_code.is_empty():
+		state = "Manche %d • %d/%d joueur(s)" % [current_round, player_count, MAX_PLAYERS]
+		if race_complete:
+			details = "Course terminée"
+			small_text = "Classement"
+			var rank := _local_player_rank()
+			if rank > 0:
+				state = "%s sur %d • manche %d" % [
+					_discord_rank_text(rank),
+					maxi(1, player_count),
+					current_round,
+				]
+		elif race_phase == "waiting":
+			details = "Prépare une course"
+			small_text = "Salon en attente"
+		elif race_phase == "countdown":
+			details = "Départ imminent"
+			small_text = "Compte à rebours"
+		elif _local_player_finished():
+			details = "A trouvé la sortie"
+			state = "Attend les autres • manche %d" % current_round
+			small_text = "Arrivé"
+		else:
+			details = "Dans le labyrinthe"
+			small_text = "Course en cours"
+
+	var payload := {
+		"details": details,
+		"state": state,
+		"started_at": discord_presence_start_unix,
+		"large_text": "A Maze Inc.",
+		"small_text": small_text,
+	}
+	if not room_code.is_empty() and player_count > 0:
+		payload["party_size"] = player_count
+		payload["party_max"] = MAX_PLAYERS
+	return payload
+
+
+func _send_discord_presence(payload: Dictionary) -> void:
+	var payload_json := JSON.stringify(payload)
+	var script := (
+		"window.mazeDiscord"
+		+ "&& window.mazeDiscord.setActivityFromGodot"
+		+ "&& window.mazeDiscord.setActivityFromGodot(%s)"
+	) % payload_json
+	JavaScriptBridge.eval(script)
+
+
+func _local_player_rank() -> int:
+	var player := _get_local_player()
+	if player.is_empty():
+		return 0
+	return int(player.get("rank", 0))
+
+
+func _discord_rank_text(rank: int) -> String:
+	if rank == 1:
+		return "1er"
+	return "%de" % rank
 
 
 func _check_discord_session() -> void:
@@ -765,11 +866,18 @@ func _check_discord_session() -> void:
 
 
 func _on_discord_pressed() -> void:
-	if _should_use_discord_activity_flow():
-		discord_button.disabled = true
-		discord_status_label.text = "Connexion Discord non disponible dans l’Activity pour le moment."
-		return
 	if not discord_user.is_empty():
+		if _should_use_discord_activity_flow():
+			discord_button.disabled = true
+			JavaScriptBridge.eval(
+				"window.mazeDiscord && window.mazeDiscord.logout && window.mazeDiscord.logout()"
+			)
+			discord_user = {}
+			discord_session_token = ""
+			_refresh_discord_controls(true)
+			_mark_discord_presence_dirty()
+			status_label.text = "Compte Discord déconnecté."
+			return
 		auth_request_action = "logout"
 		discord_button.disabled = true
 		var error := auth_request.request(
@@ -814,6 +922,7 @@ func _on_auth_request_completed(
 		if auth_request_action == "logout":
 			discord_session_token = ""
 	_refresh_discord_controls(enabled)
+	_mark_discord_presence_dirty()
 	if auth_request_action == "logout":
 		status_label.text = "Compte Discord déconnecté."
 	auth_request_action = ""
@@ -834,9 +943,22 @@ func _refresh_discord_controls(enabled: bool) -> void:
 	name_input.tooltip_text = ""
 	if _should_use_discord_activity_flow():
 		discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
-		discord_button.text = "Discord indisponible ici"
-		discord_button.disabled = true
-		discord_status_label.text = "Connexion Discord non disponible dans l’Activity pour le moment."
+		if not enabled:
+			discord_button.text = "Discord non configuré"
+			discord_button.disabled = true
+			discord_status_label.text = "Configuration serveur requise"
+		elif not discord_activity_ready:
+			discord_button.text = "Discord Activity"
+			discord_button.disabled = true
+			discord_status_label.text = "Initialisation Discord..."
+		elif discord_login_pending:
+			discord_button.text = "Connexion Discord..."
+			discord_button.disabled = true
+			discord_status_label.text = "Autorisation en cours"
+		else:
+			discord_button.text = "Se connecter avec Discord"
+			discord_button.disabled = false
+			discord_status_label.text = "Présence riche et avatar"
 		return
 	discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
 	if enabled:
@@ -930,6 +1052,7 @@ func _on_wall_shake_toggled(enabled: bool) -> void:
 
 func _process(delta: float) -> void:
 	_update_discord_bridge(delta)
+	_update_discord_presence(delta)
 	_update_network()
 	_update_movement(delta)
 	_update_effects(delta)
@@ -990,6 +1113,7 @@ func _update_network() -> void:
 			celebration_particles.clear()
 			_refresh_room_controls()
 			_refresh_scoreboard()
+			_mark_discord_presence_dirty()
 			queue_redraw()
 
 	while (
@@ -1046,6 +1170,7 @@ func _handle_message(message: Dictionary) -> void:
 			status_label.text = "%d joueur(s) dans le salon." % players.size()
 			_refresh_room_controls()
 			_refresh_scoreboard()
+			_mark_discord_presence_dirty()
 			queue_redraw()
 		"state":
 			host_id = str(message.get("host", host_id))
@@ -1059,6 +1184,7 @@ func _handle_message(message: Dictionary) -> void:
 				status_label.text = "%d joueur(s) • trouvez la sortie !" % players.size()
 			_refresh_room_controls()
 			_refresh_scoreboard()
+			_mark_discord_presence_dirty()
 			queue_redraw()
 		"error":
 			status_label.text = str(message.get("message", "Erreur du serveur."))

@@ -73,6 +73,8 @@ Pour un essai local dans PowerShell, définissez ces quatre variables avec `$env
 
 Une fois connecté, le pseudo Discord remplace le pseudo libre et la photo de profil est affichée sur le personnage. Si le compte n’est pas connecté ou si l’image ne peut pas être chargée, la couleur du joueur reste utilisée.
 
+Quand le jeu est lancé comme Activity Discord, il met aussi à jour la Rich Presence avec l’état de la course (lobby, salon, départ, course, classement). Le client demande alors le scope OAuth `rpc.activities.write` en plus de `identify`, requis par Discord pour appeler `setActivity`. Hors Activity Discord, cette présence riche reste inactive.
+
 ## Déployer gratuitement sur Render
 
 Le dépôt contient un Blueprint `render.yaml` et un `Dockerfile`. L’export Godot présent dans `web/` est servi par le même service que les salons WebSocket.
