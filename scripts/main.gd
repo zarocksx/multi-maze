@@ -711,8 +711,16 @@ func _play_tone(
 func _default_server_url() -> String:
 	if OS.has_feature("web"):
 		var javascript := (
-			"(location.protocol === 'https:' ? 'wss://' : 'ws://')"
-			+ " + location.host + '/ws'"
+			"(function(){"
+			+ "const explicit = window.mazeDiscord && window.mazeDiscord.getServerBaseUrl"
+			+ " ? window.mazeDiscord.getServerBaseUrl() : window.location.origin;"
+			+ "const url = new URL(explicit);"
+			+ "url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';"
+			+ "url.pathname = '/ws';"
+			+ "url.search = '';"
+			+ "url.hash = '';"
+			+ "return url.toString();"
+			+ "})()"
 		)
 		var value = JavaScriptBridge.eval(javascript)
 		if value is String:
@@ -722,7 +730,10 @@ func _default_server_url() -> String:
 
 func _http_url(endpoint: String) -> String:
 	if OS.has_feature("web"):
-		var origin = JavaScriptBridge.eval("window.location.origin")
+		var origin = JavaScriptBridge.eval(
+			"window.mazeDiscord && window.mazeDiscord.getServerBaseUrl"
+			+ " ? window.mazeDiscord.getServerBaseUrl() : window.location.origin"
+		)
 		if origin is String:
 			return str(origin) + endpoint
 	var base := server_input.text.strip_edges()
