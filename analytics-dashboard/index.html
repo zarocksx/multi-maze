@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A Maze Inc. Analytics</title>
+  <link rel="stylesheet" href="/analytics/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Dashboard analytics</p>
+        <h1>A Maze Inc. Growth Console</h1>
+        <p class="lede">Vue d'ensemble des sessions, des courses et du consentement RGPD, avec collecte minimisée et pseudonymisée.</p>
+      </div>
+      <form id="token-form" class="token-card">
+        <label for="token-input">Token dashboard</label>
+        <div class="token-row">
+          <input id="token-input" name="token" type="password" autocomplete="current-password" placeholder="ANALYTICS_DASHBOARD_TOKEN">
+          <button type="submit">Charger</button>
+        </div>
+        <p class="token-help">Si aucun token n'est configuré, l'accès local `localhost` reste autorisé.</p>
+      </form>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Vue d'ensemble</h2>
+          <p id="generated-at">En attente des données…</p>
+        </div>
+        <div id="overview-grid" class="overview-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Tendance 14 jours</h2>
+          <p>Sessions, pages vues, créations de salons et courses terminées.</p>
+        </div>
+        <div id="daily-chart" class="chart-list"></div>
+      </section>
+
+      <section class="panel split">
+        <div>
+          <div class="panel-head">
+            <h2>Tailles de labyrinthe</h2>
+            <p>Échelle choisie par les hôtes.</p>
+          </div>
+          <div id="maze-scale-chart" class="chart-list compact"></div>
+        </div>
+        <div>
+          <div class="panel-head">
+            <h2>Salons par taille</h2>
+            <p>Nombre de joueurs présents lors des événements suivis.</p>
+          </div>
+          <div id="room-size-chart" class="chart-list compact"></div>
+        </div>
+      </section>
+
+      <section class="panel split">
+        <div>
+          <div class="panel-head">
+            <h2>Consentement</h2>
+            <p>Choix exprimés sur la bannière analytics.</p>
+          </div>
+          <div id="consent-list" class="data-list"></div>
+        </div>
+        <div>
+          <div class="panel-head">
+            <h2>Pages suivies</h2>
+            <p>Seulement après consentement explicite.</p>
+          </div>
+          <div id="page-list" class="data-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <template id="metric-template">
+    <article class="metric-card">
+      <p class="metric-label"></p>
+      <strong class="metric-value"></strong>
+      <span class="metric-meta"></span>
+    </article>
+  </template>
+
+  <script src="/analytics/app.js"></script>
+</body>
+</html>

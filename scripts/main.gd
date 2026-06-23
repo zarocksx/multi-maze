@@ -13,6 +13,12 @@ var socket := WebSocketPeer.new()
 var auth_request: HTTPRequest
 var auth_request_action := ""
 var discord_user: Dictionary = {}
+var discord_session_token := ""
+var discord_activity_mode := false
+var discord_activity_ready := false
+var discord_login_pending := false
+var discord_bridge_error := ""
+var discord_bridge_poll_timer := 0.0
 var avatar_textures: Dictionary = {}
 var player_id := ""
 var host_id := ""
@@ -626,8 +632,16 @@ func _play_tone(
 func _default_server_url() -> String:
 	if OS.has_feature("web"):
 		var javascript := (
-			"(location.protocol === 'https:' ? 'wss://' : 'ws://')"
-			+ " + location.host + '/ws'"
+			"(function(){"
+			+ "const explicit = window.mazeDiscord && window.mazeDiscord.getServerBaseUrl"
+			+ " ? window.mazeDiscord.getServerBaseUrl() : window.location.origin;"
+			+ "const url = new URL(explicit);"
+			+ "url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';"
+			+ "url.pathname = '/ws';"
+			+ "url.search = '';"
+			+ "url.hash = '';"
+			+ "return url.toString();"
+			+ "})()"
 		)
 		var value = JavaScriptBridge.eval(javascript)
 		if value is String:
@@ -637,7 +651,10 @@ func _default_server_url() -> String:
 
 func _http_url(endpoint: String) -> String:
 	if OS.has_feature("web"):
-		var origin = JavaScriptBridge.eval("window.location.origin")
+		var origin = JavaScriptBridge.eval(
+			"window.mazeDiscord && window.mazeDiscord.getServerBaseUrl"
+			+ " ? window.mazeDiscord.getServerBaseUrl() : window.location.origin"
+		)
 		if origin is String:
 			return str(origin) + endpoint
 	var base := server_input.text.strip_edges()
@@ -654,25 +671,110 @@ func _http_url(endpoint: String) -> String:
 	return base + endpoint
 
 
+func _discord_auth_headers() -> PackedStringArray:
+	var headers := PackedStringArray()
+	if not discord_session_token.is_empty():
+		headers.append("Authorization: Bearer %s" % discord_session_token)
+	return headers
+
+
+func _discord_bridge_state() -> Dictionary:
+	if not OS.has_feature("web"):
+		return {}
+	var raw = JavaScriptBridge.eval(
+		"window.mazeDiscord && window.mazeDiscord.getStateJson ? window.mazeDiscord.getStateJson() : ''"
+	)
+	if raw is String and not raw.is_empty():
+		var parsed = JSON.parse_string(raw)
+		if parsed is Dictionary:
+			return parsed
+	return {}
+
+
+func _should_use_discord_activity_flow() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	if discord_activity_mode:
+		return true
+	var direct_host_check = JavaScriptBridge.eval(
+		"(function(){"
+		+ "const params=new URLSearchParams(window.location.search);"
+		+ "return window.location.hostname.endsWith('.discordsays.com')"
+		+ "|| params.has('instance_id')"
+		+ "|| params.has('launch_id')"
+		+ "|| params.has('frame_id')"
+		+ "|| params.has('guild_id')"
+		+ "|| params.has('channel_id');"
+		+ "})()"
+	)
+	if bool(direct_host_check):
+		return true
+	var raw = JavaScriptBridge.eval(
+		"window.mazeDiscord && window.mazeDiscord.shouldUseActivityFlow ? window.mazeDiscord.shouldUseActivityFlow() : false"
+	)
+	return bool(raw)
+
+
+func _request_discord_session_check() -> void:
+	auth_request_action = "check"
+	var error := auth_request.request(_http_url("/api/auth/me"), _discord_auth_headers())
+	if error != OK:
+		_show_discord_unavailable()
+
+
+func _sync_discord_bridge_state(force_refresh: bool = false) -> void:
+	var state := _discord_bridge_state()
+	if state.is_empty():
+		return
+	discord_activity_mode = bool(state.get("isActivity", false))
+	discord_activity_ready = bool(state.get("sdkReady", false))
+	discord_login_pending = bool(state.get("loginInFlight", false))
+	discord_bridge_error = str(state.get("error", ""))
+	var next_session_token := str(state.get("sessionToken", ""))
+	var session_changed := next_session_token != discord_session_token
+	discord_session_token = next_session_token
+	if discord_activity_mode and (session_changed or force_refresh):
+		if discord_session_token.is_empty():
+			discord_user = {}
+			_refresh_discord_controls(bool(state.get("enabled", false)))
+		else:
+			_request_discord_session_check()
+	elif discord_activity_mode and discord_user.is_empty():
+		_refresh_discord_controls(bool(state.get("enabled", false)))
+
+
+func _update_discord_bridge(delta: float) -> void:
+	if not OS.has_feature("web"):
+		return
+	discord_bridge_poll_timer -= delta
+	if discord_bridge_poll_timer > 0.0:
+		return
+	discord_bridge_poll_timer = 0.5
+	_sync_discord_bridge_state()
+
+
 func _check_discord_session() -> void:
 	if not OS.has_feature("web"):
 		discord_button.text = "Discord : version Web"
 		discord_button.disabled = true
 		discord_status_label.text = "Connexion disponible dans l’export Web"
 		return
-	auth_request_action = "check"
-	var error := auth_request.request(_http_url("/api/auth/me"))
-	if error != OK:
-		_show_discord_unavailable()
+	JavaScriptBridge.eval("window.mazeDiscord && window.mazeDiscord.init && window.mazeDiscord.init()")
+	_sync_discord_bridge_state(true)
+	_request_discord_session_check()
 
 
 func _on_discord_pressed() -> void:
+	if _should_use_discord_activity_flow():
+		discord_button.disabled = true
+		discord_status_label.text = "Connexion Discord non disponible dans l’Activity pour le moment."
+		return
 	if not discord_user.is_empty():
 		auth_request_action = "logout"
 		discord_button.disabled = true
 		var error := auth_request.request(
 			_http_url("/api/auth/logout"),
-			PackedStringArray(),
+			_discord_auth_headers(),
 			HTTPClient.METHOD_POST
 		)
 		if error != OK:
@@ -681,6 +783,14 @@ func _on_discord_pressed() -> void:
 		return
 	discord_button.disabled = true
 	discord_status_label.text = "Ouverture de Discord…"
+	if _should_use_discord_activity_flow():
+		discord_button.disabled = true
+		discord_status_label.text = "Autorisation Discord..."
+		discord_login_pending = true
+		JavaScriptBridge.eval(
+			"window.mazeDiscord && window.mazeDiscord.beginLogin && window.mazeDiscord.beginLogin()"
+		)
+		return
 	JavaScriptBridge.eval("window.location.assign('/auth/discord')")
 
 
@@ -698,8 +808,11 @@ func _on_auth_request_completed(
 	if bool(payload.get("authenticated", false)):
 		var user = payload.get("user", {})
 		discord_user = user if user is Dictionary else {}
+		discord_login_pending = false
 	else:
 		discord_user = {}
+		if auth_request_action == "logout":
+			discord_session_token = ""
 	_refresh_discord_controls(enabled)
 	if auth_request_action == "logout":
 		status_label.text = "Compte Discord déconnecté."
@@ -719,6 +832,12 @@ func _refresh_discord_controls(enabled: bool) -> void:
 		return
 	name_input.editable = true
 	name_input.tooltip_text = ""
+	if _should_use_discord_activity_flow():
+		discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
+		discord_button.text = "Discord indisponible ici"
+		discord_button.disabled = true
+		discord_status_label.text = "Connexion Discord non disponible dans l’Activity pour le moment."
+		return
 	discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
 	if enabled:
 		discord_button.text = "Se connecter avec Discord"
@@ -732,6 +851,7 @@ func _refresh_discord_controls(enabled: bool) -> void:
 
 func _show_discord_unavailable() -> void:
 	discord_user = {}
+	discord_login_pending = false
 	discord_button.text = "Discord indisponible"
 	discord_button.disabled = true
 	discord_status_label.text = "Le serveur d’authentification ne répond pas"
@@ -809,6 +929,7 @@ func _on_wall_shake_toggled(enabled: bool) -> void:
 
 
 func _process(delta: float) -> void:
+	_update_discord_bridge(delta)
 	_update_network()
 	_update_movement(delta)
 	_update_effects(delta)
@@ -895,6 +1016,8 @@ func _connect_and_send(message: Dictionary) -> void:
 	var url := server_input.text.strip_edges()
 	if url.is_empty():
 		url = _default_server_url()
+	if OS.has_feature("web") and not discord_session_token.is_empty():
+		url += ("%ssession=%s" % ["&" if url.contains("?") else "?", discord_session_token])
 	var error := socket.connect_to_url(url)
 	if error != OK:
 		pending_message = {}

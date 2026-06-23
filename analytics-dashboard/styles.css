@@ -1,0 +1,258 @@
+:root {
+  color-scheme: dark;
+  --bg: #08121d;
+  --panel: rgba(10, 24, 38, 0.9);
+  --panel-strong: rgba(16, 35, 53, 0.96);
+  --text: #ebf4ff;
+  --muted: #8ea7bf;
+  --line: rgba(133, 220, 255, 0.18);
+  --accent: #7ce4ff;
+  --accent-2: #ffd166;
+  --good: #79e36a;
+  --bad: #ff8ba7;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI Variable", "Aptos", "Trebuchet MS", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(124, 228, 255, 0.12), transparent 28%),
+    radial-gradient(circle at 85% 15%, rgba(255, 209, 102, 0.1), transparent 24%),
+    linear-gradient(180deg, #0a1521 0%, var(--bg) 62%, #050b12 100%);
+}
+
+.shell {
+  width: min(1200px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 48px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr;
+  gap: 20px;
+  align-items: end;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.78rem;
+  color: var(--accent);
+}
+
+h1, h2, p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2.2rem, 5vw, 4.2rem);
+  line-height: 0.96;
+  max-width: 12ch;
+}
+
+.lede {
+  margin-top: 14px;
+  max-width: 60ch;
+  color: var(--muted);
+}
+
+.token-card,
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+
+.token-card {
+  padding: 18px;
+}
+
+.token-card label {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.token-row {
+  display: flex;
+  gap: 10px;
+}
+
+.token-row input,
+.token-row button {
+  border: 0;
+  border-radius: 14px;
+  padding: 14px 16px;
+  font: inherit;
+}
+
+.token-row input {
+  flex: 1;
+  color: var(--text);
+  background: var(--panel-strong);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.token-row button {
+  color: #061019;
+  background: linear-gradient(135deg, var(--accent), #c7f7ff);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.token-help {
+  margin-top: 10px;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.layout {
+  display: grid;
+  gap: 20px;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: baseline;
+  margin-bottom: 18px;
+}
+
+.panel-head p {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.metric-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(124, 228, 255, 0.08), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(124, 228, 255, 0.08);
+}
+
+.metric-label,
+.metric-meta {
+  color: var(--muted);
+}
+
+.metric-value {
+  display: block;
+  margin: 10px 0 8px;
+  font-size: clamp(1.6rem, 3vw, 2.5rem);
+  line-height: 1;
+}
+
+.chart-list,
+.data-list {
+  display: grid;
+  gap: 12px;
+}
+
+.chart-list.compact {
+  gap: 10px;
+}
+
+.chart-row,
+.data-row {
+  display: grid;
+  gap: 8px;
+}
+
+.chart-meta,
+.data-row {
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+}
+
+.chart-label,
+.data-label {
+  font-size: 0.95rem;
+}
+
+.chart-value,
+.data-value {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-bar {
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chart-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.empty {
+  padding: 18px;
+  border-radius: 16px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 960px) {
+  .hero,
+  .split,
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    width: min(100%, calc(100% - 20px));
+    padding-top: 14px;
+  }
+
+  .panel,
+  .token-card {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .panel-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .token-row {
+    flex-direction: column;
+  }
+}

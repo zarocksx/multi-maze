@@ -1,5 +1,8 @@
 "use strict";
 
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { WebSocket } = require("ws");
@@ -19,6 +22,10 @@ const {
   discordAvatarUrl,
   createGameServer,
 } = require("../server");
+
+function createTempAnalyticsPath() {
+  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "multi-maze-analytics-")), "analytics.json");
+}
 
 function waitForMessage(socket, expectedType) {
   return new Promise((resolve, reject) => {
@@ -90,6 +97,27 @@ test("un WebSocket authentifié utilise le nom et l'avatar Discord", async (cont
   );
 });
 
+test("un WebSocket Activity authentifie via query string utilise le profil Discord", async (context) => {
+  const sessionSecret = "activity-websocket-secret";
+  const session = createAuthSession({
+    id: "222222222222222222",
+    username: "activity_name",
+    global_name: "Activity Runner",
+    avatar: "activityavatar",
+  }, sessionSecret);
+  const server = createGameServer({ discordConfig: { sessionSecret } });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const connection = await connect(`ws://127.0.0.1:${address.port}/ws?session=${encodeURIComponent(session)}`);
+  context.after(() => connection.socket.terminate());
+  await connection.hello;
+  const roomMessage = waitForMessage(connection.socket, "room");
+  connection.socket.send(JSON.stringify({ type: "create", name: "Nom local" }));
+  const room = await roomMessage;
+  assert.equal(room.players[0].name, "Activity Runner");
+  assert.equal(room.players[0].discord, true);
+});
+
 test("le callback OAuth Discord crée une session HTTP utilisable par le jeu", async (context) => {
   const discordConfig = {
     clientId: "client-id",
@@ -138,6 +166,53 @@ test("le callback OAuth Discord crée une session HTTP utilisable par le jeu", a
   assert.equal(payload.authenticated, true);
   assert.equal(payload.user.displayName, "OAuth Runner");
   assert.equal(payload.user.avatarUrl, "/api/discord/avatar/default/3.png");
+});
+
+test("le endpoint Activity Discord retourne un token de session utilisable sans cookie", async (context) => {
+  const discordConfig = {
+    clientId: "client-id",
+    clientSecret: "client-secret",
+    redirectUri: "http://127.0.0.1/auth/discord/callback",
+    sessionSecret: "activity-oauth-secret",
+  };
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "discord-activity-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      id: "333333333333333333",
+      username: "activity_user",
+      global_name: "Activity OAuth",
+      avatar: null,
+      default_avatar: "4",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  const server = createGameServer({ discordConfig, fetchImpl });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  const authResponse = await fetch(`${origin}/api/auth/discord/activity`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: "activity-code" }),
+  });
+  assert.equal(authResponse.status, 200);
+  const authPayload = await authResponse.json();
+  assert.equal(authPayload.authenticated, true);
+  assert.equal(authPayload.access_token, "discord-activity-token");
+  assert.ok(authPayload.session);
+
+  const profile = await fetch(`${origin}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${authPayload.session}` },
+  });
+  const payload = await profile.json();
+  assert.equal(payload.authenticated, true);
+  assert.equal(payload.user.displayName, "Activity OAuth");
+  assert.equal(payload.user.avatarUrl, "/api/discord/avatar/default/4.png");
 });
 
 test("les pages légales sont accessibles avec des URLs sans extension", async (context) => {
@@ -404,4 +479,76 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   const countdown = await countdownState;
   assert.equal(countdown.phase, "countdown");
   assert.ok(countdown.startAt > countdown.serverNow);
+});
+
+test("le consentement analytics est explicite et le dashboard est protÃ©gÃ©", async (context) => {
+  const server = createGameServer({
+    analyticsConfig: {
+      storagePath: createTempAnalyticsPath(),
+      dashboardToken: "dashboard-secret",
+    },
+  });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  const initialConsent = await fetch(`${origin}/api/analytics/consent`);
+  assert.equal(initialConsent.status, 200);
+  assert.equal((await initialConsent.json()).consent, "unknown");
+
+  const grant = await fetch(`${origin}/api/analytics/consent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ consent: "granted" }),
+  });
+  assert.equal(grant.status, 200);
+  const grantedCookie = grant.headers.get("set-cookie") || "";
+  assert.match(grantedCookie, /maze_analytics_consent=granted/);
+  assert.match(grantedCookie, /maze_analytics_id=/);
+
+  const deniedSummary = await fetch(`${origin}/api/analytics/summary`);
+  assert.equal(deniedSummary.status, 401);
+
+  const allowedSummary = await fetch(`${origin}/api/analytics/summary`, {
+    headers: { "x-analytics-token": "dashboard-secret" },
+  });
+  assert.equal(allowedSummary.status, 200);
+  const payload = await allowedSummary.json();
+  assert.equal(payload.consent[0].choice, "granted");
+});
+
+test("les analytics de jeu remontent dans le rÃ©sumÃ©", async (context) => {
+  const server = createGameServer({
+    analyticsConfig: {
+      storagePath: createTempAnalyticsPath(),
+    },
+  });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const firstConnection = await connect(url);
+  const secondConnection = await connect(url);
+  const first = firstConnection.socket;
+  const second = secondConnection.socket;
+  context.after(() => first.terminate());
+  context.after(() => second.terminate());
+  await Promise.all([firstConnection.hello, secondConnection.hello]);
+
+  const firstRoom = waitForMessage(first, "room");
+  first.send(JSON.stringify({ type: "create", name: "Bleu" }));
+  const created = await firstRoom;
+
+  const hostUpdate = waitForMessage(first, "room");
+  const secondRoom = waitForMessage(second, "room");
+  second.send(JSON.stringify({ type: "join", room: created.room, name: "Rose" }));
+  await Promise.all([hostUpdate, secondRoom]);
+
+  const countdownState = waitForMessage(first, "state");
+  first.send(JSON.stringify({ type: "start" }));
+  await countdownState;
+
+  const summary = await server.analyticsStore.summary({ days: 14 });
+  assert.equal(summary.overview.roomsCreated, 1);
+  assert.equal(summary.overview.roomJoins, 1);
+  assert.equal(summary.overview.raceStarts, 1);
 });

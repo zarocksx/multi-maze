@@ -27,6 +27,31 @@ Entre deux courses, l’hôte choisit parmi dix tailles avec le slider près du 
 
 En version Web, le client déduit automatiquement l’adresse WebSocket depuis le domaine courant (`wss://votre-domaine/ws`). Le même service Node sert le jeu et les salons.
 
+## Dashboard analytics RGPD
+
+Le projet expose un dashboard séparé sur `/analytics` avec une collecte minimale :
+
+- consentement explicite avant toute mesure web non essentielle ;
+- respect du signal navigateur `Do Not Track` ;
+- identifiants pseudonymisés ;
+- aucune IP brute, aucun email et aucun identifiant Discord stocké dans les analytics ;
+- rétention limitée à 30 jours par défaut.
+
+Le backend peut stocker ces événements soit localement, soit dans Supabase si votre instance est configurée.
+
+1. Exécutez le SQL de `server/sql/supabase-analytics.sql` dans votre projet Supabase.
+2. Configurez les variables d’environnement suivantes :
+
+```text
+ANALYTICS_DASHBOARD_TOKEN=choisissez_un_token_long
+SUPABASE_URL=https://votre-projet.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=votre_service_role_key
+SUPABASE_ANALYTICS_TABLE=analytics_events
+ANALYTICS_RETENTION_DAYS=30
+```
+
+Sans `ANALYTICS_DASHBOARD_TOKEN`, le dashboard reste limité à `localhost`.
+
 ## Configurer la connexion Discord
 
 La connexion Discord fonctionne dans l’export Web. Le secret OAuth reste uniquement sur le serveur et les sessions sont stockées dans un cookie `HttpOnly` signé.
