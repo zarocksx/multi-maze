@@ -242,6 +242,32 @@ test("le endpoint Activity Discord retourne un token de session utilisable sans 
   assert.equal(payload.user.avatarUrl, "/api/discord/avatar/default/4.png");
 });
 
+test("les chemins Activity proxy exposent les mêmes endpoints JSON", async (context) => {
+  const server = createGameServer({
+    discordConfig: {
+      clientId: "123456789012345678",
+      clientSecret: "secret",
+      redirectUri: "http://127.0.0.1/auth/discord/callback",
+      sessionSecret: "activity-proxy-secret",
+    },
+  });
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  const [directConfig, proxyConfig, proxyProfile] = await Promise.all([
+    fetch(`${origin}/api/auth/discord/config`),
+    fetch(`${origin}/.proxy/api/auth/discord/config`),
+    fetch(`${origin}/.proxy/api/auth/me`),
+  ]);
+
+  assert.equal(directConfig.status, 200);
+  assert.equal(proxyConfig.status, 200);
+  assert.equal(proxyProfile.status, 200);
+  assert.deepEqual(await proxyConfig.json(), await directConfig.json());
+  assert.equal((await proxyProfile.json()).authenticated, false);
+});
+
 test("les pages légales sont accessibles avec des URLs sans extension", async (context) => {
   const server = createGameServer();
   const address = await server.start(0, "127.0.0.1");

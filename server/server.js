@@ -794,6 +794,11 @@ function createGameServer({
 
   async function handleHttpRequest(request, response) {
     const requestUrl = new URL(request.url, "http://localhost");
+    if (requestUrl.pathname === "/.proxy") {
+      requestUrl.pathname = "/";
+    } else if (requestUrl.pathname.startsWith("/.proxy/")) {
+      requestUrl.pathname = requestUrl.pathname.slice("/.proxy".length);
+    }
 
     if (requestUrl.pathname === "/api/analytics/consent" && request.method === "GET") {
       sendJson(response, 200, {

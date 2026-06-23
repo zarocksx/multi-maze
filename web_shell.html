@@ -153,7 +153,7 @@ const mazeDiscordState = {
 	activityScopeReady: false,
 	activityUpdateInFlight: false,
 	lastActivitySignature: '',
-	apiBasePath: shouldUseDiscordActivityFlow() ? '/.proxy' : '',
+	apiBasePath: '',
 	sessionToken: '',
 	user: null,
 	participants: [],
@@ -306,7 +306,6 @@ function mazeApiBasePathFromUrl(url, path) {
 function mazeApiCandidates(path) {
 	const candidates = [
 		mazeDiscordState.apiBasePath,
-		'',
 		'/.proxy',
 	].filter((value, index, values) => values.indexOf(value) === index);
 	return candidates.map((basePath) => ({
