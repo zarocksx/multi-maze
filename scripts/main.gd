@@ -833,13 +833,13 @@ func _check_discord_session() -> void:
 
 
 func _on_discord_pressed() -> void:
+	if _should_use_discord_activity_flow():
+		discord_button.disabled = true
+		discord_status_label.text = "Connexion Discord non disponible dans l’Activity pour le moment."
+		return
 	if not discord_user.is_empty():
 		auth_request_action = "logout"
 		discord_button.disabled = true
-		if discord_activity_mode:
-			JavaScriptBridge.eval("window.mazeDiscord && window.mazeDiscord.logout && window.mazeDiscord.logout()")
-			discord_session_token = ""
-			discord_login_pending = false
 		var error := auth_request.request(
 			_http_url("/api/auth/logout"),
 			_discord_auth_headers(),
@@ -900,24 +900,11 @@ func _refresh_discord_controls(enabled: bool) -> void:
 		return
 	name_input.editable = true
 	name_input.tooltip_text = ""
-	if discord_activity_mode:
-		if not discord_bridge_error.is_empty() and not discord_login_pending:
-			discord_status_label.add_theme_color_override("font_color", Color("ff8fa3"))
-			discord_button.text = "Reessayer Discord"
-			discord_button.disabled = not discord_activity_ready
-			discord_status_label.text = discord_bridge_error
-			return
+	if _should_use_discord_activity_flow():
 		discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
-		if not discord_activity_ready:
-			discord_button.text = "Discord Activity"
-			discord_button.disabled = true
-			discord_status_label.text = "Initialisation de Discord..."
-			return
-		discord_button.text = "Se connecter dans Discord"
-		discord_button.disabled = false
-		discord_status_label.text = "Utiliser votre profil Discord"
-		if discord_login_pending:
-			discord_status_label.text = "Autorisation Discord en cours..."
+		discord_button.text = "Discord indisponible ici"
+		discord_button.disabled = true
+		discord_status_label.text = "Connexion Discord non disponible dans l’Activity pour le moment."
 		return
 	discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
 	if enabled:
