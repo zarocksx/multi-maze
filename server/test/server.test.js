@@ -7,12 +7,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { WebSocket } = require("ws");
 const {
-  WALL_TOP,
-  WALL_RIGHT,
-  WALL_BOTTOM,
-  WALL_LEFT,
+  Wall,
+  MAX_PLAYERS,
+  DEFAULT_POWER_UP_COUNT,
   generateMaze,
   createPowerUps,
+  powerUpCountForMaze,
   canMove,
   applyPowerUp,
   applyMove,
@@ -298,10 +298,10 @@ test("le générateur produit des murs cohérents et un labyrinthe entièrement 
   const visited = new Set(["0,0"]);
   const queue = [{ x: 0, y: 0 }];
   const directions = [
-    ["up", 0, -1, WALL_TOP, WALL_BOTTOM],
-    ["right", 1, 0, WALL_RIGHT, WALL_LEFT],
-    ["down", 0, 1, WALL_BOTTOM, WALL_TOP],
-    ["left", -1, 0, WALL_LEFT, WALL_RIGHT],
+    ["up", 0, -1, Wall.TOP, Wall.BOTTOM],
+    ["right", 1, 0, Wall.RIGHT, Wall.LEFT],
+    ["down", 0, 1, Wall.BOTTOM, Wall.TOP],
+    ["left", -1, 0, Wall.LEFT, Wall.RIGHT],
   ];
 
   while (queue.length) {
@@ -326,7 +326,7 @@ test("chaque joueur est chronométré jusqu’à ce que tout le salon termine", 
   const maze = {
     width: 3,
     height: 1,
-    cells: [WALL_TOP | WALL_BOTTOM | WALL_LEFT, WALL_TOP | WALL_BOTTOM, WALL_TOP | WALL_RIGHT | WALL_BOTTOM],
+    cells: [Wall.TOP | Wall.BOTTOM | Wall.LEFT, Wall.TOP | Wall.BOTTOM, Wall.TOP | Wall.RIGHT | Wall.BOTTOM],
     start: { x: 0, y: 0 },
     exit: { x: 2, y: 0 },
   };
@@ -403,6 +403,10 @@ test("les objets mystère sont uniques et appliquent bonus ou malus", () => {
 
 test("le nombre de power-ups suit la surface du labyrinthe", () => {
   const random = () => 0.42;
+  assert.equal(MAX_PLAYERS, 20);
+  assert.equal(DEFAULT_POWER_UP_COUNT, 10);
+  assert.equal(powerUpCountForMaze(generateMaze(38, 26), 0), 0);
+  assert.equal(powerUpCountForMaze(generateMaze(38, 26), 4), 4);
   assert.equal(createPowerUps(generateMaze(19, 13), null, random).length, 3);
   assert.equal(createPowerUps(generateMaze(38, 26), null, random).length, 10);
   assert.equal(createPowerUps(generateMaze(62, 42), null, random).length, 26);
@@ -412,7 +416,7 @@ test("le serveur bloque tout mouvement avant le départ synchronisé", () => {
   const maze = {
     width: 3,
     height: 1,
-    cells: [WALL_TOP | WALL_BOTTOM | WALL_LEFT, WALL_TOP | WALL_BOTTOM, WALL_TOP | WALL_RIGHT | WALL_BOTTOM],
+    cells: [Wall.TOP | Wall.BOTTOM | Wall.LEFT, Wall.TOP | Wall.BOTTOM, Wall.TOP | Wall.RIGHT | Wall.BOTTOM],
     start: { x: 0, y: 0 },
     exit: { x: 2, y: 0 },
   };
@@ -454,7 +458,7 @@ test("l’hôte relance tous les joueurs sans remplacer leurs connexions", () =>
   const nextMaze = {
     width: 2,
     height: 1,
-    cells: [WALL_TOP | WALL_BOTTOM | WALL_LEFT, WALL_TOP | WALL_RIGHT | WALL_BOTTOM],
+    cells: [Wall.TOP | Wall.BOTTOM | Wall.LEFT, Wall.TOP | Wall.RIGHT | Wall.BOTTOM],
     start: { x: 0, y: 0 },
     exit: { x: 1, y: 0 },
   };
@@ -494,6 +498,7 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   assert.equal(created.players.length, 1);
   assert.equal(created.phase, "waiting");
   assert.equal(created.mazeScale, 5);
+  assert.equal(created.powerUpCount, 10);
   assert.equal(created.powerUps.length, 10);
   assert.equal("ghost" in created, false);
 
@@ -514,6 +519,19 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   assert.equal(hostResize.maze.height, 42);
   assert.equal(hostResize.powerUps.length, 26);
   assert.deepEqual(guestResize.maze, hostResize.maze);
+
+  const powerCountForHost = waitForMessage(first, "room");
+  const powerCountForGuest = waitForMessage(second, "room");
+  first.send(JSON.stringify({ type: "power_up_count", count: 4 }));
+  const [hostPowerCount, guestPowerCount] = await Promise.all([powerCountForHost, powerCountForGuest]);
+  assert.equal(hostPowerCount.powerUpCount, 4);
+  assert.equal(hostPowerCount.powerUps.length, powerUpCountForMaze(hostPowerCount.maze, 4));
+  assert.deepEqual(guestPowerCount.powerUps, hostPowerCount.powerUps);
+
+  second.send(JSON.stringify({ type: "power_up_count", count: 30 }));
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(server.rooms.get(created.room).powerUpCount, 4);
+
   second.send(JSON.stringify({ type: "maze_size", scale: 1 }));
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(server.rooms.get(created.room).mazeScale, 10);

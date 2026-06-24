@@ -1,10 +1,8 @@
 extends Node
 class_name GameState
 
-const WALL_TOP: int = 1
-const WALL_RIGHT: int = 2
-const WALL_BOTTOM: int = 4
-const WALL_LEFT: int = 8
+const DEFAULT_POWER_UP_COUNT: int = 10
+const MAX_POWER_UP_COUNT: int = 30
 
 var player_id: String = ""
 var host_id: String = ""
@@ -17,6 +15,7 @@ var race_phase: String = "waiting"
 var race_start_deadline_ms: int = 0
 var go_flash_until_ms: int = 0
 var power_ups: Array = []
+var power_up_count: int = DEFAULT_POWER_UP_COUNT
 var podium: Array = []
 var maze_scale: int = 5
 var current_round: int = 1
@@ -55,6 +54,7 @@ func apply_race_metadata(message: Dictionary, local_ms: int) -> void:
 	power_ups_snapshot_local_ms = local_ms
 	race_phase = str(message.get("phase", race_phase))
 	power_ups = message.get("powerUps", power_ups)
+	power_up_count = clampi(int(message.get("powerUpCount", power_up_count)), 0, MAX_POWER_UP_COUNT)
 	podium = message.get("podium", podium)
 	current_round = int(message.get("round", current_round))
 	maze_scale = clampi(int(message.get("mazeScale", maze_scale)), 1, 10)
@@ -79,6 +79,7 @@ func reset_room() -> void:
 	race_start_deadline_ms = 0
 	go_flash_until_ms = 0
 	power_ups.clear()
+	power_up_count = DEFAULT_POWER_UP_COUNT
 	podium.clear()
 	last_event_id = ""
 	effects_snapshot_local_ms = 0
@@ -174,13 +175,13 @@ func can_local_player_move(direction: String) -> bool:
 	var wall := 0
 	match direction:
 		"up":
-			wall = WALL_TOP
+			wall = MazeWall.Flag.TOP
 		"right":
-			wall = WALL_RIGHT
+			wall = MazeWall.Flag.RIGHT
 		"down":
-			wall = WALL_BOTTOM
+			wall = MazeWall.Flag.BOTTOM
 		"left":
-			wall = WALL_LEFT
+			wall = MazeWall.Flag.LEFT
 		_:
 			return false
 	for player in players:

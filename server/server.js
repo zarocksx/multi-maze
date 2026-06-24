@@ -7,18 +7,32 @@ const crypto = require("node:crypto");
 const { WebSocketServer, WebSocket } = require("ws");
 const { createAnalyticsStore } = require("./supabase-analytics-store");
 
-const WALL_TOP = 1;
-const WALL_RIGHT = 2;
-const WALL_BOTTOM = 4;
-const WALL_LEFT = 8;
+const Wall = Object.freeze({
+  TOP: 1,
+  RIGHT: 2,
+  BOTTOM: 4,
+  LEFT: 8,
+});
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const COLORS = ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff", "#ff914d", "#55efc4", "#f7aef8"];
-const MAX_PLAYERS = 8;
+const COLORS = [
+  "#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff",
+  "#ff914d", "#55efc4", "#f7aef8", "#8bd3ff", "#ffb703",
+  "#90dbf4", "#fb6f92", "#caffbf", "#a0c4ff", "#ffc6ff",
+  "#bde0fe", "#fdffb6", "#9bf6ff", "#d0f4de", "#e4c1f9",
+];
+const MAX_PLAYERS = 20;
 const MOVE_COOLDOWN_MS = 55;
 const COUNTDOWN_MS = 3500;
-const POWER_UP_COUNT = 10;
+const DEFAULT_POWER_UP_COUNT = 10;
+const MIN_POWER_UP_COUNT = 0;
+const MAX_POWER_UP_COUNT = 30;
 const POWER_UP_RESPAWN_MS = 8000;
-const RANK_POINTS = [10, 7, 5, 3, 2, 1, 1, 1];
+const RANK_POINTS = [
+  10, 7, 5, 3, 2,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1,
+];
 const POWER_UP_KINDS = ["speed", "shield", "slow_all", "confuse_all", "freeze_all"];
 const BASE_MAZE_WIDTH = 19;
 const BASE_MAZE_HEIGHT = 13;
@@ -31,10 +45,10 @@ const MAZE_WIDTH = Math.round(BASE_MAZE_WIDTH * DEFAULT_MAZE_FACTOR);
 const MAZE_HEIGHT = Math.round(BASE_MAZE_HEIGHT * DEFAULT_MAZE_FACTOR);
 
 const DIRECTIONS = {
-  up: { dx: 0, dy: -1, wall: WALL_TOP },
-  right: { dx: 1, dy: 0, wall: WALL_RIGHT },
-  down: { dx: 0, dy: 1, wall: WALL_BOTTOM },
-  left: { dx: -1, dy: 0, wall: WALL_LEFT },
+  up: { dx: 0, dy: -1, wall: Wall.TOP },
+  right: { dx: 1, dy: 0, wall: Wall.RIGHT },
+  down: { dx: 0, dy: 1, wall: Wall.BOTTOM },
+  left: { dx: -1, dy: 0, wall: Wall.LEFT },
 };
 
 const AUTH_COOKIE = "maze_discord_session";
@@ -173,6 +187,11 @@ function normalizeMazeScale(value) {
   return Math.max(MIN_MAZE_SCALE, Math.min(MAX_MAZE_SCALE, scale));
 }
 
+function normalizePowerUpCount(value) {
+  const count = Math.round(Number(value) || 0);
+  return Math.max(MIN_POWER_UP_COUNT, Math.min(MAX_POWER_UP_COUNT, count));
+}
+
 function generateScaledMaze(scale) {
   const normalizedScale = normalizeMazeScale(scale);
   const factor = 0.75 + normalizedScale * MAZE_SCALE_STEP;
@@ -189,10 +208,10 @@ function generateMaze(width = MAZE_WIDTH, height = MAZE_HEIGHT, random = Math.ra
   visited[0] = true;
 
   const carvingDirections = [
-    { dx: 0, dy: -1, wall: WALL_TOP, opposite: WALL_BOTTOM },
-    { dx: 1, dy: 0, wall: WALL_RIGHT, opposite: WALL_LEFT },
-    { dx: 0, dy: 1, wall: WALL_BOTTOM, opposite: WALL_TOP },
-    { dx: -1, dy: 0, wall: WALL_LEFT, opposite: WALL_RIGHT },
+    { dx: 0, dy: -1, wall: Wall.TOP, opposite: Wall.BOTTOM },
+    { dx: 1, dy: 0, wall: Wall.RIGHT, opposite: Wall.LEFT },
+    { dx: 0, dy: 1, wall: Wall.BOTTOM, opposite: Wall.TOP },
+    { dx: -1, dy: 0, wall: Wall.LEFT, opposite: Wall.RIGHT },
   ];
 
   while (stack.length) {
@@ -222,11 +241,11 @@ function generateMaze(width = MAZE_WIDTH, height = MAZE_HEIGHT, random = Math.ra
     const x = Math.floor(random() * width);
     const y = Math.floor(random() * height);
     const options = [];
-    if (x + 1 < width && (cells[y * width + x] & WALL_RIGHT)) {
-      options.push({ dx: 1, dy: 0, wall: WALL_RIGHT, opposite: WALL_LEFT });
+    if (x + 1 < width && (cells[y * width + x] & Wall.RIGHT)) {
+      options.push({ dx: 1, dy: 0, wall: Wall.RIGHT, opposite: Wall.LEFT });
     }
-    if (y + 1 < height && (cells[y * width + x] & WALL_BOTTOM)) {
-      options.push({ dx: 0, dy: 1, wall: WALL_BOTTOM, opposite: WALL_TOP });
+    if (y + 1 < height && (cells[y * width + x] & Wall.BOTTOM)) {
+      options.push({ dx: 0, dy: 1, wall: Wall.BOTTOM, opposite: Wall.TOP });
     }
     if (!options.length) continue;
     const direction = options[Math.floor(random() * options.length)];
@@ -255,9 +274,15 @@ function createRoomCode(rooms) {
   throw new Error("Impossible de générer un code de salon unique.");
 }
 
-function powerUpCountForMaze(maze) {
+function powerUpCountForMaze(maze, baseCount = DEFAULT_POWER_UP_COUNT) {
+  const normalizedBaseCount = normalizePowerUpCount(baseCount);
+  if (normalizedBaseCount <= 0) return 0;
   const defaultArea = MAZE_WIDTH * MAZE_HEIGHT;
-  return Math.max(3, Math.round(POWER_UP_COUNT * maze.width * maze.height / defaultArea));
+  return Math.max(3, Math.round(normalizedBaseCount * maze.width * maze.height / defaultArea));
+}
+
+function createConfiguredPowerUps(maze, baseCount = DEFAULT_POWER_UP_COUNT, random = Math.random) {
+  return createPowerUps(maze, powerUpCountForMaze(maze, baseCount), random);
 }
 
 function createPowerUps(maze, count = null, random = Math.random) {
@@ -343,6 +368,7 @@ function roomMessage(room) {
     event: room.lastEvent,
     round: room.round,
     mazeScale: room.mazeScale,
+    powerUpCount: room.powerUpCount,
     podium: room.podium,
   };
 }
@@ -362,6 +388,7 @@ function stateMessage(room) {
     event: room.lastEvent,
     round: room.round,
     mazeScale: room.mazeScale,
+    powerUpCount: room.powerUpCount,
     podium: room.podium,
   };
 }
@@ -516,7 +543,7 @@ function prepareRoomMaze(room, nextMaze) {
   room.finishCount = 0;
   room.phase = "waiting";
   room.startAt = 0;
-  room.powerUps = createPowerUps(room.maze);
+  room.powerUps = createConfiguredPowerUps(room.maze, room.powerUpCount);
   room.lastEvent = null;
   for (const player of room.players.values()) {
     player.x = room.maze.start.x;
@@ -1104,7 +1131,8 @@ function createGameServer({
         startAt: 0,
         round: 1,
         mazeScale: DEFAULT_MAZE_SCALE,
-        powerUps: createPowerUps(maze),
+        powerUpCount: DEFAULT_POWER_UP_COUNT,
+        powerUps: createConfiguredPowerUps(maze, DEFAULT_POWER_UP_COUNT),
         lastEvent: null,
         standings: new Map(),
         history: [],
@@ -1225,6 +1253,22 @@ function createGameServer({
       return;
     }
 
+    if (message.type === "power_up_count") {
+      if (room.hostId !== socket.id || room.phase !== "waiting") return;
+      const nextCount = normalizePowerUpCount(message.count);
+      if (nextCount === room.powerUpCount) return;
+      room.powerUpCount = nextCount;
+      room.powerUps = createConfiguredPowerUps(room.maze, room.powerUpCount);
+      room.lastEvent = null;
+      recordAnalytics("power_up_count_changed", {
+        players: room.players.size,
+        mazeScale: room.mazeScale,
+        powerUpCount: room.powerUpCount,
+      }, roomAnalyticsSession(room));
+      broadcast(room, roomMessage(room));
+      return;
+    }
+
     if (message.type === "restart") {
       if (room.hostId !== socket.id) {
         send(socket, { type: "error", message: "Seul le créateur du salon peut relancer." });
@@ -1282,12 +1326,14 @@ if (require.main === module) {
 }
 
 module.exports = {
-  WALL_TOP,
-  WALL_RIGHT,
-  WALL_BOTTOM,
-  WALL_LEFT,
+  Wall,
+  MAX_PLAYERS,
+  DEFAULT_POWER_UP_COUNT,
+  MAX_POWER_UP_COUNT,
   generateMaze,
   createPowerUps,
+  createConfiguredPowerUps,
+  powerUpCountForMaze,
   canMove,
   applyPowerUp,
   applyMove,

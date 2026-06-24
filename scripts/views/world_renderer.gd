@@ -1,11 +1,6 @@
 extends Node2D
 class_name WorldRenderer
 
-const WALL_TOP: int = 1
-const WALL_RIGHT: int = 2
-const WALL_BOTTOM: int = 4
-const WALL_LEFT: int = 8
-
 var game_state: GameState
 var avatar_loader: AvatarLoader
 var lobby_panel: Control
@@ -552,11 +547,11 @@ func _draw_maze_walls(origin: Vector2, cell_size: float, width: int, height: int
 				continue
 			var walls := int(cells[index])
 			var p := origin + Vector2(x * cell_size, y * cell_size)
-			if walls & WALL_TOP:
+			if walls & MazeWall.Flag.TOP:
 				draw_line(p, p + Vector2(cell_size, 0), wall_color, wall_width, true)
-			if walls & WALL_LEFT:
+			if walls & MazeWall.Flag.LEFT:
 				draw_line(p, p + Vector2(0, cell_size), wall_color, wall_width, true)
-			if y == height - 1 and walls & WALL_BOTTOM:
+			if y == height - 1 and walls & MazeWall.Flag.BOTTOM:
 				draw_line(
 					p + Vector2(0, cell_size),
 					p + Vector2(cell_size, cell_size),
@@ -564,7 +559,7 @@ func _draw_maze_walls(origin: Vector2, cell_size: float, width: int, height: int
 					wall_width,
 					true
 				)
-			if x == width - 1 and walls & WALL_RIGHT:
+			if x == width - 1 and walls & MazeWall.Flag.RIGHT:
 				draw_line(
 					p + Vector2(cell_size, 0),
 					p + Vector2(cell_size, cell_size),

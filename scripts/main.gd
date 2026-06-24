@@ -2,7 +2,9 @@ extends Node2D
 
 const LOCAL_SERVER_URL: String = "ws://127.0.0.1:8080/ws"
 const GAMEPAD_DEADZONE: float = 0.42
-const MAX_PLAYERS: int = 8
+const MAX_PLAYERS: int = 20
+const DEFAULT_POWER_UP_COUNT: int = GameState.DEFAULT_POWER_UP_COUNT
+const MAX_POWER_UP_COUNT: int = GameState.MAX_POWER_UP_COUNT
 
 @onready var settings_store: SettingStore = $SettingsStore
 @onready var audio_director: AudioDirector = $AudioDirector
@@ -70,6 +72,11 @@ var power_ups: Array:
 		return game_state.power_ups
 	set(value):
 		game_state.power_ups = value
+var power_up_count: int:
+	get:
+		return game_state.power_up_count
+	set(value):
+		game_state.power_up_count = value
 var podium: Array:
 	get:
 		return game_state.podium
@@ -101,6 +108,8 @@ var waiting_label: Label
 var maze_size_controls: VBoxContainer
 var maze_size_label: Label
 var maze_size_slider: HSlider
+var power_up_count_label: Label
+var power_up_count_slider: HSlider
 var score_restart_button: Button
 var wall_shake_toggle: CheckButton
 var player_tooltip: Label
@@ -228,12 +237,14 @@ func _build_interface() -> void:
 	maze_size_controls.offset_left = -236
 	maze_size_controls.offset_top = 118
 	maze_size_controls.offset_right = -16
-	maze_size_controls.offset_bottom = 178
+	maze_size_controls.offset_bottom = 258
 	root.add_child(maze_size_controls)
+
 	maze_size_label = Label.new()
 	maze_size_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	maze_size_label.add_theme_color_override("font_color", Color("b9d5ec"))
 	maze_size_controls.add_child(maze_size_label)
+
 	maze_size_slider = HSlider.new()
 	maze_size_slider.min_value = 1
 	maze_size_slider.max_value = 10
@@ -243,7 +254,23 @@ func _build_interface() -> void:
 	maze_size_slider.ticks_on_borders = true
 	maze_size_slider.value_changed.connect(_on_maze_size_changed)
 	maze_size_controls.add_child(maze_size_slider)
+
+	power_up_count_label = Label.new()
+	power_up_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	power_up_count_label.add_theme_color_override("font_color", Color("b9d5ec"))
+	maze_size_controls.add_child(power_up_count_label)
+
+	power_up_count_slider = HSlider.new()
+	power_up_count_slider.min_value = 0
+	power_up_count_slider.max_value = MAX_POWER_UP_COUNT
+	power_up_count_slider.step = 1
+	power_up_count_slider.value = DEFAULT_POWER_UP_COUNT
+	power_up_count_slider.tick_count = 7
+	power_up_count_slider.ticks_on_borders = true
+	power_up_count_slider.value_changed.connect(_on_power_up_count_changed)
+	maze_size_controls.add_child(power_up_count_slider)
 	_update_maze_size_label()
+	_update_power_up_count_label()
 
 	race_hud.build(root)
 	race_hud.tone_requested.connect(_on_race_hud_tone_requested)
@@ -544,6 +571,8 @@ func _configure_focus_navigation() -> void:
 	start_race_button.focus_neighbor_top = start_race_button.get_path_to(copy_button)
 	start_race_button.focus_neighbor_bottom = start_race_button.get_path_to(maze_size_slider)
 	maze_size_slider.focus_neighbor_top = maze_size_slider.get_path_to(start_race_button)
+	maze_size_slider.focus_neighbor_bottom = maze_size_slider.get_path_to(power_up_count_slider)
+	power_up_count_slider.focus_neighbor_top = power_up_count_slider.get_path_to(maze_size_slider)
 
 
 func _detect_touchscreen() -> bool:
@@ -705,6 +734,7 @@ func _sync_gamepad_focus_lock() -> void:
 		_set_focus_mode_if_valid(copy_button, next_focus_mode)
 		_set_focus_mode_if_valid(start_race_button, next_focus_mode)
 		_set_focus_mode_if_valid(maze_size_slider, next_focus_mode)
+		_set_focus_mode_if_valid(power_up_count_slider, next_focus_mode)
 		_set_focus_mode_if_valid(score_restart_button, next_focus_mode)
 		_set_focus_mode_if_valid(wall_shake_toggle, next_focus_mode)
 	if should_lock:
@@ -816,6 +846,8 @@ func _apply_race_metadata(message: Dictionary) -> void:
 	game_state.apply_race_metadata(message, Time.get_ticks_msec())
 	maze_size_slider.set_value_no_signal(maze_scale)
 	_update_maze_size_label()
+	power_up_count_slider.set_value_no_signal(power_up_count)
+	_update_power_up_count_label()
 	_handle_power_event(message.get("event", {}))
 
 
@@ -1278,10 +1310,24 @@ func _on_maze_size_changed(value: float) -> void:
 		_send_json({"type": "maze_size", "scale": maze_scale})
 
 
+func _on_power_up_count_changed(value: float) -> void:
+	power_up_count = clampi(roundi(value), 0, MAX_POWER_UP_COUNT)
+	power_up_count_slider.set_value_no_signal(power_up_count)
+	_update_power_up_count_label()
+	if race_phase == "waiting" and host_id == player_id:
+		_send_json({"type": "power_up_count", "count": power_up_count})
+
+
 func _update_maze_size_label() -> void:
 	var factor := 0.75 + maze_scale * 0.25
 	maze_size_label.text = "Taille %d/10  •  %d × %d" % [
 		maze_scale, roundi(19 * factor), roundi(13 * factor)
+	]
+
+
+func _update_power_up_count_label() -> void:
+	power_up_count_label.text = "Objets %d/%d  -  %d actif(s)" % [
+		power_up_count, MAX_POWER_UP_COUNT, power_ups.size()
 	]
 
 
