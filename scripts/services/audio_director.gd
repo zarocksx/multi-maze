@@ -1,4 +1,5 @@
 extends Node
+class_name AudioDirector
 
 const SAMPLE_RATE := 11025.0
 const BUFFER_LENGTH := 0.45

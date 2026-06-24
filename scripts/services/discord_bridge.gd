@@ -1,4 +1,5 @@
 extends Node
+class_name DiscordBridge
 
 signal debug_logged(message: String, level: String)
 

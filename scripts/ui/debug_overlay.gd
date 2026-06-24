@@ -1,4 +1,5 @@
 extends Node
+class_name DebugOverlay
 
 const MAX_LINES := 8
 const MAX_CHARS := 112

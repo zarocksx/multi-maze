@@ -1,38 +1,90 @@
 extends Node2D
 
-const LOCAL_SERVER_URL := "ws://127.0.0.1:8080/ws"
-const WALL_TOP := 1
-const WALL_RIGHT := 2
-const WALL_BOTTOM := 4
-const WALL_LEFT := 8
-const CELEBRATION_COLORS := ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff"]
-const GAMEPAD_DEADZONE := 0.42
-const MAX_PLAYERS := 8
+const LOCAL_SERVER_URL: String = "ws://127.0.0.1:8080/ws"
+const GAMEPAD_DEADZONE: float = 0.42
+const MAX_PLAYERS: int = 8
 
-@onready var settings_store := $SettingsStore
-@onready var audio_director := $AudioDirector
-@onready var network_client := $NetworkClient
-@onready var avatar_loader := $AvatarLoader
-@onready var debug_overlay := $DebugOverlay
-@onready var discord_bridge := $DiscordBridge
+@onready var settings_store: SettingStore = $SettingsStore
+@onready var audio_director: AudioDirector = $AudioDirector
+@onready var network_client: NetworkClient = $NetworkClient
+@onready var avatar_loader: AvatarLoader = $AvatarLoader
+@onready var debug_overlay: DebugOverlay = $DebugOverlay
+@onready var discord_bridge: DiscordBridge = $DiscordBridge
+@onready var game_state: GameState = $GameState
+@onready var world_renderer: WorldRenderer = $WorldRenderer
+@onready var scoreboard_panel: ScoreboardPanel = $ScoreboardPanel
+@onready var race_hud: RaceHud = $RaceHud
 
-var player_id := ""
-var host_id := ""
-var room_code := ""
-var maze: Dictionary = {}
-var players: Array = []
-var winner_id := ""
-var race_complete := false
-var race_phase := "waiting"
-var race_start_deadline_ms := 0
-var go_flash_until_ms := 0
-var power_ups: Array = []
-var podium: Array = []
-var maze_scale := 5
-var current_round := 1
-var last_event_id := ""
-var effects_snapshot_local_ms := 0
-var power_ups_snapshot_local_ms := 0
+var player_id: String:
+	get:
+		return game_state.player_id
+	set(value):
+		game_state.player_id = value
+var host_id: String:
+	get:
+		return game_state.host_id
+	set(value):
+		game_state.host_id = value
+var room_code: String:
+	get:
+		return game_state.room_code
+	set(value):
+		game_state.room_code = value
+var maze: Dictionary:
+	get:
+		return game_state.maze
+	set(value):
+		game_state.maze = value
+var players: Array:
+	get:
+		return game_state.players
+	set(value):
+		game_state.players = value
+var winner_id: String:
+	get:
+		return game_state.winner_id
+	set(value):
+		game_state.winner_id = value
+var race_complete: bool:
+	get:
+		return game_state.race_complete
+	set(value):
+		game_state.race_complete = value
+var race_phase: String:
+	get:
+		return game_state.race_phase
+	set(value):
+		game_state.race_phase = value
+var race_start_deadline_ms: int:
+	get:
+		return game_state.race_start_deadline_ms
+	set(value):
+		game_state.race_start_deadline_ms = value
+var go_flash_until_ms: int:
+	get:
+		return game_state.go_flash_until_ms
+	set(value):
+		game_state.go_flash_until_ms = value
+var power_ups: Array:
+	get:
+		return game_state.power_ups
+	set(value):
+		game_state.power_ups = value
+var podium: Array:
+	get:
+		return game_state.podium
+	set(value):
+		game_state.podium = value
+var maze_scale: int:
+	get:
+		return game_state.maze_scale
+	set(value):
+		game_state.maze_scale = value
+var current_round: int:
+	get:
+		return game_state.current_round
+	set(value):
+		game_state.current_round = value
 
 var panel: PanelContainer
 var server_input: LineEdit
@@ -49,19 +101,10 @@ var waiting_label: Label
 var maze_size_controls: VBoxContainer
 var maze_size_label: Label
 var maze_size_slider: HSlider
-var countdown_label: Label
-var event_toast: Label
-var event_toast_timer := 0.0
-var rank_label: Label
-var effect_hud_label: Label
-var score_panel: PanelContainer
-var score_rows: VBoxContainer
-var podium_rows: VBoxContainer
-var score_subtitle: Label
 var score_restart_button: Button
 var wall_shake_toggle: CheckButton
 var player_tooltip: Label
-var held_direction := ""
+var held_direction: String = ""
 var move_repeat_timer := 0.0
 var animation_time := 0.0
 var wall_hit_timer := 0.0
@@ -71,20 +114,14 @@ var movement_ripples: Array = []
 var pickup_particles: Array = []
 var celebration_particles: Array = []
 var random := RandomNumberGenerator.new()
-var last_maze_origin := Vector2.ZERO
-var last_cell_size := 0.0
-var hovered_player_id := ""
 var finish_slow_timer := 0.0
 var power_down_flash_timer := 0.0
 var power_down_flash_color := Color.TRANSPARENT
 var active_power_downs: Dictionary = {}
-var direction_hint_until_ms := 0
-var last_countdown_value := ""
-var scoreboard_animated_round := 0
 var wall_shake_enabled := true
 var touchscreen_available := false
 var touch_controls: PanelContainer
-var touch_direction := ""
+var touch_direction: String = ""
 var gamepad_focus_locked := false
 
 
@@ -100,7 +137,7 @@ func _ready() -> void:
 	_debug_log("WS par défaut : %s" % _debug_safe_url(server_input.text), "net")
 	_check_discord_session()
 	get_viewport().size_changed.connect(_on_viewport_resized)
-	queue_redraw()
+	_queue_world_redraw()
 
 
 func _setup_services() -> void:
@@ -208,63 +245,9 @@ func _build_interface() -> void:
 	maze_size_controls.add_child(maze_size_slider)
 	_update_maze_size_label()
 
-	countdown_label = Label.new()
-	countdown_label.visible = false
-	countdown_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	countdown_label.add_theme_font_size_override("font_size", 96)
-	countdown_label.add_theme_color_override("font_color", Color("ffd166"))
-	countdown_label.add_theme_color_override("font_outline_color", Color("07101b"))
-	countdown_label.add_theme_constant_override("outline_size", 12)
-	countdown_label.set_anchors_preset(Control.PRESET_CENTER)
-	countdown_label.offset_left = -180
-	countdown_label.offset_top = -110
-	countdown_label.offset_right = 180
-	countdown_label.offset_bottom = 110
-	countdown_label.z_index = 20
-	root.add_child(countdown_label)
-
-	event_toast = Label.new()
-	event_toast.visible = false
-	event_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	event_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	event_toast.add_theme_font_size_override("font_size", 19)
-	event_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	event_toast.offset_left = -270
-	event_toast.offset_top = 18
-	event_toast.offset_right = 270
-	event_toast.offset_bottom = 58
-	event_toast.z_index = 15
-	root.add_child(event_toast)
-
-	effect_hud_label = Label.new()
-	effect_hud_label.visible = false
-	effect_hud_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	effect_hud_label.add_theme_font_size_override("font_size", 16)
-	effect_hud_label.add_theme_color_override("font_color", Color("eaf6ff"))
-	var effect_style := StyleBoxFlat.new()
-	effect_style.bg_color = Color(0.04, 0.08, 0.13, 0.88)
-	effect_style.border_color = Color(0.32, 0.79, 0.95, 0.42)
-	effect_style.set_border_width_all(1)
-	effect_style.set_corner_radius_all(8)
-	effect_style.content_margin_left = 11
-	effect_style.content_margin_right = 11
-	effect_style.content_margin_top = 6
-	effect_style.content_margin_bottom = 6
-	effect_hud_label.add_theme_stylebox_override("normal", effect_style)
-	effect_hud_label.position = Vector2(16, 16)
-	effect_hud_label.z_index = 8
-	root.add_child(effect_hud_label)
-
-	rank_label = Label.new()
-	rank_label.visible = false
-	rank_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rank_label.add_theme_font_size_override("font_size", 20)
-	rank_label.add_theme_color_override("font_color", Color("ffd166"))
-	rank_label.position = Vector2(16, 62)
-	rank_label.z_index = 8
-	root.add_child(rank_label)
+	race_hud.build(root)
+	race_hud.tone_requested.connect(_on_race_hud_tone_requested)
+	race_hud.direction_hint_requested.connect(_on_direction_hint_requested)
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 22)
@@ -413,74 +396,23 @@ func _build_interface() -> void:
 	player_tooltip.z_index = 5
 	root.add_child(player_tooltip)
 
-	score_panel = PanelContainer.new()
-	score_panel.visible = false
-	score_panel.z_index = 10
-	score_panel.set_anchors_preset(Control.PRESET_CENTER)
-	score_panel.offset_left = -290
-	score_panel.offset_top = -270
-	score_panel.offset_right = 290
-	score_panel.offset_bottom = 270
-	var score_style := StyleBoxFlat.new()
-	score_style.bg_color = Color("101c2d")
-	score_style.border_color = Color("ffd166")
-	score_style.set_border_width_all(2)
-	score_style.set_corner_radius_all(14)
-	score_panel.add_theme_stylebox_override("panel", score_style)
-	root.add_child(score_panel)
-
-	var score_margin := MarginContainer.new()
-	score_margin.add_theme_constant_override("margin_left", 24)
-	score_margin.add_theme_constant_override("margin_top", 20)
-	score_margin.add_theme_constant_override("margin_right", 24)
-	score_margin.add_theme_constant_override("margin_bottom", 20)
-	score_panel.add_child(score_margin)
-	var score_content := VBoxContainer.new()
-	score_content.add_theme_constant_override("separation", 12)
-	score_margin.add_child(score_content)
-
-	var score_title := Label.new()
-	score_title.text = "TOUT LE MONDE EST ARRIVÉ !"
-	score_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	score_title.add_theme_font_size_override("font_size", 25)
-	score_title.add_theme_color_override("font_color", Color("ffd166"))
-	score_content.add_child(score_title)
-	score_subtitle = Label.new()
-	score_subtitle.text = "Classement de la course"
-	score_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	score_subtitle.add_theme_color_override("font_color", Color("9aa9c2"))
-	score_content.add_child(score_subtitle)
-	score_content.add_child(HSeparator.new())
-
-	var score_header := HBoxContainer.new()
-	score_content.add_child(score_header)
-	_add_score_label(score_header, "#", 40, HORIZONTAL_ALIGNMENT_LEFT, Color("9aa9c2"))
-	var avatar_header_spacer := Control.new()
-	avatar_header_spacer.custom_minimum_size.x = 36
-	score_header.add_child(avatar_header_spacer)
-	_add_score_label(score_header, "Joueur", 270, HORIZONTAL_ALIGNMENT_LEFT, Color("9aa9c2"))
-	_add_score_label(score_header, "Temps", 130, HORIZONTAL_ALIGNMENT_RIGHT, Color("9aa9c2"))
-
-	score_rows = VBoxContainer.new()
-	score_rows.add_theme_constant_override("separation", 6)
-	score_rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	score_content.add_child(score_rows)
-	score_content.add_child(HSeparator.new())
-	var podium_title := Label.new()
-	podium_title.text = "PODIUM GÉNÉRAL"
-	podium_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	podium_title.add_theme_font_size_override("font_size", 19)
-	podium_title.add_theme_color_override("font_color", Color("83e8ff"))
-	score_content.add_child(podium_title)
-	podium_rows = VBoxContainer.new()
-	podium_rows.add_theme_constant_override("separation", 5)
-	score_content.add_child(podium_rows)
-	score_restart_button = Button.new()
-	score_restart_button.text = "Préparer un nouveau labyrinthe"
-	score_restart_button.visible = false
-	score_restart_button.pressed.connect(_on_score_restart_pressed)
-	score_content.add_child(score_restart_button)
+	scoreboard_panel.build(root, avatar_loader, Callable(self, "_ensure_avatar_loaded"))
+	scoreboard_panel.restart_requested.connect(_on_score_restart_pressed)
+	score_restart_button = scoreboard_panel.restart_button
+	_configure_world_renderer()
 	_configure_focus_navigation()
+
+
+func _configure_world_renderer() -> void:
+	world_renderer.configure(game_state, avatar_loader, panel)
+	world_renderer.bind_view_state(
+		visual_positions,
+		trail_marks,
+		movement_ripples,
+		pickup_particles,
+		celebration_particles
+	)
+	_sync_world_renderer()
 
 
 func _layout_lobby_panel() -> void:
@@ -639,6 +571,20 @@ func _play_tone(
 	audio_director.play_tone(frequency, duration, volume, waveform, slide)
 
 
+func _on_race_hud_tone_requested(
+	frequency: float,
+	duration: float,
+	volume: float,
+	waveform: String,
+	slide: float
+) -> void:
+	_play_tone(frequency, duration, volume, waveform, slide)
+
+
+func _on_direction_hint_requested(until_ms: int) -> void:
+	world_renderer.show_direction_hint(until_ms)
+
+
 func _default_server_url() -> String:
 	return discord_bridge.default_server_url(LOCAL_SERVER_URL)
 
@@ -665,23 +611,7 @@ func _update_discord_presence(delta: float) -> void:
 
 
 func _discord_game_context() -> Dictionary:
-	return {
-		"room_code": room_code,
-		"player_count": players.size(),
-		"current_round": current_round,
-		"max_players": MAX_PLAYERS,
-		"race_complete": race_complete,
-		"race_phase": race_phase,
-		"local_rank": _local_player_rank(),
-		"local_finished": _local_player_finished(),
-	}
-
-
-func _local_player_rank() -> int:
-	var player := _get_local_player()
-	if player.is_empty():
-		return 0
-	return int(player.get("rank", 0))
+	return game_state.discord_context(MAX_PLAYERS)
 
 
 func _check_discord_session() -> void:
@@ -702,7 +632,7 @@ func _ensure_avatar_loaded(player: Dictionary) -> void:
 func _on_avatar_changed() -> void:
 	if race_complete:
 		_refresh_scoreboard()
-	queue_redraw()
+	_queue_world_redraw()
 
 
 func _load_settings() -> void:
@@ -828,22 +758,14 @@ func _on_network_closed(while_in_room: bool) -> void:
 		return
 	status_label.text = "Connexion perdue. Vérifiez le serveur."
 	_debug_log("WS fermé pendant un salon", "error")
-	room_code = ""
-	host_id = ""
-	race_complete = false
-	race_phase = "waiting"
-	race_start_deadline_ms = 0
-	power_ups.clear()
-	podium.clear()
-	players.clear()
-	maze.clear()
+	game_state.reset_room()
 	visual_positions.clear()
 	trail_marks.clear()
 	celebration_particles.clear()
 	_refresh_room_controls()
 	_refresh_scoreboard()
 	_mark_discord_presence_dirty()
-	queue_redraw()
+	_queue_world_redraw()
 
 
 func _on_network_sent(message_type: String) -> void:
@@ -862,25 +784,21 @@ func _handle_message(message: Dictionary) -> void:
 	_debug_log("WS recv %s" % str(message.get("type", "?")), "net")
 	match str(message.get("type", "")):
 		"hello":
-			player_id = str(message.get("playerId", ""))
+			game_state.apply_hello(message)
 		"room":
-			room_code = str(message.get("room", ""))
-			host_id = str(message.get("host", ""))
-			maze = message.get("maze", {})
+			game_state.apply_room_snapshot(message)
 			_set_players(message.get("players", []))
 			_set_winner(str(message.get("winner", "")))
-			race_complete = bool(message.get("complete", false))
 			_apply_race_metadata(message)
 			status_label.text = "%d joueur(s) dans le salon." % players.size()
 			_refresh_room_controls()
 			_refresh_scoreboard()
 			_mark_discord_presence_dirty()
-			queue_redraw()
+			_queue_world_redraw()
 		"state":
-			host_id = str(message.get("host", host_id))
+			game_state.apply_state_snapshot(message)
 			_set_players(message.get("players", []))
 			_set_winner(str(message.get("winner", "")))
-			race_complete = bool(message.get("complete", false))
 			_apply_race_metadata(message)
 			if not winner_id.is_empty():
 				status_label.text = _winner_text()
@@ -889,30 +807,15 @@ func _handle_message(message: Dictionary) -> void:
 			_refresh_room_controls()
 			_refresh_scoreboard()
 			_mark_discord_presence_dirty()
-			queue_redraw()
+			_queue_world_redraw()
 		"error":
 			status_label.text = str(message.get("message", "Erreur du serveur."))
 
 
 func _apply_race_metadata(message: Dictionary) -> void:
-	var previous_phase := race_phase
-	effects_snapshot_local_ms = Time.get_ticks_msec()
-	power_ups_snapshot_local_ms = effects_snapshot_local_ms
-	race_phase = str(message.get("phase", race_phase))
-	power_ups = message.get("powerUps", power_ups)
-	podium = message.get("podium", podium)
-	current_round = int(message.get("round", current_round))
-	maze_scale = clampi(int(message.get("mazeScale", maze_scale)), 1, 10)
+	game_state.apply_race_metadata(message, Time.get_ticks_msec())
 	maze_size_slider.set_value_no_signal(maze_scale)
 	_update_maze_size_label()
-	if race_phase == "countdown":
-		var server_now := int(message.get("serverNow", 0))
-		var start_at := int(message.get("startAt", server_now))
-		race_start_deadline_ms = Time.get_ticks_msec() + maxi(0, start_at - server_now)
-	elif previous_phase == "countdown" and race_phase == "running":
-		go_flash_until_ms = Time.get_ticks_msec() + 650
-	if race_phase == "waiting":
-		last_event_id = ""
 	_handle_power_event(message.get("event", {}))
 
 
@@ -932,7 +835,7 @@ func _refresh_room_controls() -> void:
 			copy_button.text = "Copier le code  •  %s" % room_code
 		else:
 			copy_button.text = "%s  •  Copier %s" % [_winner_text(), room_code]
-	queue_redraw()
+	_queue_world_redraw()
 
 
 func _refresh_touch_controls() -> void:
@@ -964,170 +867,9 @@ func _on_touch_direction_released(direction: String) -> void:
 
 
 func _refresh_scoreboard() -> void:
-	score_panel.visible = race_complete
-	score_restart_button.visible = race_complete and host_id == player_id
-	if not race_complete:
-		return
-	var animate_rows := scoreboard_animated_round != current_round
-	if animate_rows:
-		scoreboard_animated_round = current_round
-	score_subtitle.text = "Classement de la manche %d" % current_round
-	player_tooltip.visible = false
-	for child in score_rows.get_children():
-		score_rows.remove_child(child)
-		child.queue_free()
-
-	var ranked_players := players.duplicate()
-	ranked_players.sort_custom(_sort_players_by_rank)
-	for index in range(ranked_players.size()):
-		var player: Dictionary = ranked_players[index]
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
-		score_rows.add_child(row)
-		var color := Color.from_string(str(player.get("color", "#ffffff")), Color.WHITE)
-		_add_score_label(
-			row,
-			"%d." % int(player.get("rank", 0)),
-			40,
-			HORIZONTAL_ALIGNMENT_LEFT,
-			color
-		)
-		_add_score_avatar(row, player, color)
-		_add_score_label(
-			row,
-			str(player.get("name", "Joueur")),
-			270,
-			HORIZONTAL_ALIGNMENT_LEFT,
-			color
-		)
-		_add_score_label(
-			row,
-			_format_time(int(player.get("timeMs", 0))),
-			130,
-			HORIZONTAL_ALIGNMENT_RIGHT,
-			Color("e8f1ff")
-		)
-		if animate_rows:
-			_animate_score_row(row, index * 0.09)
-
-	for child in podium_rows.get_children():
-		podium_rows.remove_child(child)
-		child.queue_free()
-	for index in range(podium.size()):
-		var standing: Dictionary = podium[index]
-		var podium_row := HBoxContainer.new()
-		podium_row.add_theme_constant_override("separation", 8)
-		podium_rows.add_child(podium_row)
-		var color := Color.from_string(str(standing.get("color", "#ffffff")), Color.WHITE)
-		_ensure_avatar_loaded(standing)
-		_add_score_label(
-			podium_row,
-			"%d" % (index + 1),
-			40,
-			HORIZONTAL_ALIGNMENT_LEFT,
-			Color("ffd166") if index == 0 else Color("c6d5e8")
-		)
-		_add_score_avatar(podium_row, standing, color)
-		_add_score_label(
-			podium_row,
-			str(standing.get("name", "Joueur")),
-			235,
-			HORIZONTAL_ALIGNMENT_LEFT,
-			color
-		)
-		_add_score_label(
-			podium_row,
-			"%d pts  •  %d victoire(s)" % [
-				int(standing.get("points", 0)),
-				int(standing.get("wins", 0)),
-			],
-			155,
-			HORIZONTAL_ALIGNMENT_RIGHT,
-			Color("9fb3c8")
-		)
-		if animate_rows:
-			_animate_score_row(podium_row, 0.22 + index * 0.14)
-
-
-func _animate_score_row(row: Control, delay: float) -> void:
-	row.modulate = Color(1.0, 1.0, 1.0, 0.0)
-	row.scale = Vector2(0.92, 0.92)
-	var tween := create_tween()
-	tween.set_parallel(true)
-	tween.tween_property(row, "modulate:a", 1.0, 0.28).set_delay(delay)
-	tween.tween_property(row, "scale", Vector2.ONE, 0.34).set_delay(delay).set_trans(
-		Tween.TRANS_BACK
-	).set_ease(Tween.EASE_OUT)
-
-
-func _add_score_label(
-	parent: Container,
-	text: String,
-	minimum_width: float,
-	alignment: HorizontalAlignment,
-	color: Color
-) -> void:
-	var label := Label.new()
-	label.text = text
-	label.custom_minimum_size.x = minimum_width
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.horizontal_alignment = alignment
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_color_override("font_color", color)
-	parent.add_child(label)
-
-
-func _add_score_avatar(parent: Container, player: Dictionary, color: Color) -> void:
-	var avatar_slot := Control.new()
-	avatar_slot.custom_minimum_size = Vector2(36, 32)
-	avatar_slot.tooltip_text = "Avatar de %s" % str(player.get("name", "Joueur"))
-	parent.add_child(avatar_slot)
-
-	var avatar_url := str(player.get("avatarUrl", ""))
-	var avatar_texture = avatar_loader.get_texture(avatar_url)
-	if avatar_texture is Texture2D:
-		var border := Label.new()
-		border.text = "●"
-		border.position = Vector2.ZERO
-		border.size = Vector2(32, 32)
-		border.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		border.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		border.add_theme_font_size_override("font_size", 31)
-		border.add_theme_color_override("font_color", color)
-		border.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		avatar_slot.add_child(border)
-
-		var portrait := TextureRect.new()
-		portrait.texture = avatar_texture
-		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		portrait.position = Vector2(4, 4)
-		portrait.size = Vector2(24, 24)
-		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		avatar_slot.add_child(portrait)
-		return
-
-	var fallback := Label.new()
-	fallback.text = "●"
-	fallback.position = Vector2.ZERO
-	fallback.size = Vector2(32, 32)
-	fallback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	fallback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	fallback.add_theme_font_size_override("font_size", 24)
-	fallback.add_theme_color_override("font_color", color)
-	fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	avatar_slot.add_child(fallback)
-
-
-func _sort_players_by_rank(first: Dictionary, second: Dictionary) -> bool:
-	return int(first.get("rank", 999)) < int(second.get("rank", 999))
-
-
-func _format_time(time_ms: int) -> String:
-	var minutes := int(time_ms / 60000)
-	var seconds := int(time_ms / 1000) % 60
-	var milliseconds := time_ms % 1000
-	return "%02d:%02d.%03d" % [minutes, seconds, milliseconds]
+	if race_complete:
+		player_tooltip.visible = false
+	scoreboard_panel.refresh(players, podium, race_complete, current_round, host_id == player_id)
 
 
 func _winner_text() -> String:
@@ -1144,19 +886,16 @@ func _set_players(next_players: Array) -> void:
 	var previous_finished: Dictionary = {}
 	for player in players:
 		var previous_id := str(player.get("id", ""))
-		previous_targets[previous_id] = Vector2(
-			float(player.get("x", 0)),
-			float(player.get("y", 0))
-		)
+		previous_targets[previous_id] = GameState.grid_position(player)
 		previous_finished[previous_id] = bool(player.get("finished", false))
 
-	players = next_players
+	game_state.set_players(next_players)
 	var present_players: Dictionary = {}
 	var newly_finished_players: Array = []
 	for player in players:
 		var id := str(player.get("id", ""))
 		_ensure_avatar_loaded(player)
-		var target := Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
+		var target := GameState.grid_position(player)
 		present_players[id] = true
 		if not visual_positions.has(id):
 			visual_positions[id] = target
@@ -1190,7 +929,7 @@ func _set_players(next_players: Array) -> void:
 
 
 func _set_winner(next_winner: String) -> void:
-	winner_id = next_winner
+	game_state.set_winner(next_winner)
 	if winner_id.is_empty():
 		celebration_particles.clear()
 
@@ -1224,46 +963,23 @@ func _update_movement(delta: float) -> void:
 
 
 func _race_can_move() -> bool:
-	if race_phase == "running":
-		return true
-	return race_phase == "countdown" and Time.get_ticks_msec() >= race_start_deadline_ms
+	return game_state.race_can_move(Time.get_ticks_msec())
 
 
 func _local_player_finished() -> bool:
-	for player in players:
-		if str(player.get("id", "")) == player_id:
-			return bool(player.get("finished", false))
-	return false
+	return game_state.local_player_finished()
 
 
 func _local_effect_active(effect_name: String) -> bool:
-	var player := _get_local_player()
-	if player.is_empty():
-		return false
-	return _effect_active(player.get("effects", {}), effect_name)
+	return game_state.local_effect_active(effect_name, Time.get_ticks_msec())
 
 
 func _get_local_player() -> Dictionary:
-	for player in players:
-		if str(player.get("id", "")) == player_id:
-			return player
-	return {}
+	return game_state.get_local_player()
 
 
 func _local_effect_remaining(effect_name: String) -> float:
-	var player := _get_local_player()
-	if player.is_empty():
-		return 0.0
-	var effects: Dictionary = player.get("effects", {})
-	var elapsed := Time.get_ticks_msec() - effects_snapshot_local_ms
-	return maxf(0.0, (int(effects.get("%sMs" % effect_name, 0)) - elapsed) / 1000.0)
-
-
-func _effect_active(effects: Dictionary, effect_name: String) -> bool:
-	if effect_name == "shield":
-		return bool(effects.get("shield", false))
-	var elapsed := Time.get_ticks_msec() - effects_snapshot_local_ms
-	return int(effects.get("%sMs" % effect_name, 0)) > elapsed
+	return game_state.local_effect_remaining(effect_name, Time.get_ticks_msec())
 
 
 func _try_send_move(direction: String) -> void:
@@ -1276,28 +992,7 @@ func _try_send_move(direction: String) -> void:
 
 
 func _can_local_player_move(direction: String) -> bool:
-	var cells: Array = maze.get("cells", [])
-	var width := int(maze.get("width", 0))
-	if cells.is_empty() or width <= 0:
-		return true
-	var wall := 0
-	match direction:
-		"up":
-			wall = WALL_TOP
-		"right":
-			wall = WALL_RIGHT
-		"down":
-			wall = WALL_BOTTOM
-		"left":
-			wall = WALL_LEFT
-		_:
-			return false
-	for player in players:
-		if str(player.get("id", "")) != player_id:
-			continue
-		var index := int(player.get("y", 0)) * width + int(player.get("x", 0))
-		return index >= 0 and index < cells.size() and (int(cells[index]) & wall) == 0
-	return true
+	return game_state.can_local_player_move(direction)
 
 
 func _spawn_trail(from: Vector2, to: Vector2, color: Color, boosted: bool = false) -> void:
@@ -1319,11 +1014,13 @@ func _spawn_trail(from: Vector2, to: Vector2, color: Color, boosted: bool = fals
 func _start_celebration(dominant_color: Color = Color.TRANSPARENT) -> void:
 	celebration_particles.clear()
 	var goal: Dictionary = maze.get("exit", {})
-	var origin := Vector2(float(goal.get("x", 0)) + 0.5, float(goal.get("y", 0)) + 0.5)
+	var origin := GameState.grid_center(goal)
 	for index in range(52):
 		var angle := random.randf_range(0.0, TAU)
 		var speed := random.randf_range(1.4, 4.8)
-		var particle_color := Color(CELEBRATION_COLORS[index % CELEBRATION_COLORS.size()])
+		var particle_color := Color(
+			RaceVisuals.CELEBRATION_COLORS[index % RaceVisuals.CELEBRATION_COLORS.size()]
+		)
 		if dominant_color.a > 0.0 and index < 34:
 			particle_color = dominant_color
 		celebration_particles.append(
@@ -1340,58 +1037,28 @@ func _start_celebration(dominant_color: Color = Color.TRANSPARENT) -> void:
 func _update_effects(delta: float) -> void:
 	finish_slow_timer = maxf(0.0, finish_slow_timer - delta)
 	power_down_flash_timer = maxf(0.0, power_down_flash_timer - delta)
-	var power_down_colors := {
-		"slow": Color("9b64e8"),
-		"confused": Color("ff5ca8"),
-		"frozen": Color("8fe7ff"),
-	}
-	for effect in power_down_colors:
+	for effect in ["slow", "confused", "frozen"]:
 		var is_active := _local_effect_active(effect)
 		if is_active and not bool(active_power_downs.get(effect, false)):
 			power_down_flash_timer = 0.46
-			power_down_flash_color = power_down_colors[effect]
+			power_down_flash_color = RaceVisuals.power_down_color(effect)
 		active_power_downs[effect] = is_active
 	var visual_delta := delta * (0.28 if finish_slow_timer > 0.0 else 1.0)
 	animation_time += visual_delta
 	wall_hit_timer = maxf(0.0, wall_hit_timer - delta)
-	if event_toast_timer > 0.0:
-		event_toast_timer = maxf(0.0, event_toast_timer - delta)
-		event_toast.visible = event_toast_timer > 0.0
+	race_hud.update_toast(delta)
 
 	var targets: Dictionary = {}
 	for player in players:
-		targets[str(player.get("id", ""))] = Vector2(
-			float(player.get("x", 0)),
-			float(player.get("y", 0))
-		)
+		targets[str(player.get("id", ""))] = GameState.grid_position(player)
 	var smoothing := 1.0 - exp(-visual_delta * 18.0)
 	for id in visual_positions.keys():
 		if targets.has(id):
 			visual_positions[id] = visual_positions[id].lerp(targets[id], smoothing)
 
-	for index in range(trail_marks.size() - 1, -1, -1):
-		var mark: Dictionary = trail_marks[index]
-		mark["life"] = float(mark.get("life", 0.0)) - visual_delta
-		if float(mark["life"]) <= 0.0:
-			trail_marks.remove_at(index)
-		else:
-			trail_marks[index] = mark
-
-	for index in range(movement_ripples.size() - 1, -1, -1):
-		var ripple: Dictionary = movement_ripples[index]
-		ripple["life"] = float(ripple.get("life", 0.0)) - visual_delta
-		if float(ripple["life"]) <= 0.0:
-			movement_ripples.remove_at(index)
-		else:
-			movement_ripples[index] = ripple
-
-	for index in range(pickup_particles.size() - 1, -1, -1):
-		var pickup_particle: Dictionary = pickup_particles[index]
-		pickup_particle["life"] = float(pickup_particle.get("life", 0.0)) - visual_delta
-		if float(pickup_particle["life"]) <= 0.0:
-			pickup_particles.remove_at(index)
-		else:
-			pickup_particles[index] = pickup_particle
+	_decay_life_particles(trail_marks, visual_delta)
+	_decay_life_particles(movement_ripples, visual_delta)
+	_decay_life_particles(pickup_particles, visual_delta)
 
 	for index in range(celebration_particles.size() - 1, -1, -1):
 		var particle: Dictionary = celebration_particles[index]
@@ -1405,33 +1072,21 @@ func _update_effects(delta: float) -> void:
 		else:
 			celebration_particles[index] = particle
 
-	queue_redraw()
+	_queue_world_redraw()
+
+
+func _decay_life_particles(particles: Array, visual_delta: float) -> void:
+	for index in range(particles.size() - 1, -1, -1):
+		var particle: Dictionary = particles[index]
+		particle["life"] = float(particle.get("life", 0.0)) - visual_delta
+		if float(particle["life"]) <= 0.0:
+			particles.remove_at(index)
+		else:
+			particles[index] = particle
 
 
 func _update_countdown_ui() -> void:
-	var now := Time.get_ticks_msec()
-	if race_phase == "countdown":
-		var remaining := race_start_deadline_ms - now
-		if remaining > 0:
-			countdown_label.text = str(clampi(int(ceil(remaining / 1000.0)), 1, 3))
-			countdown_label.visible = true
-		else:
-			countdown_label.text = "GO !"
-			countdown_label.visible = remaining > -700
-	elif now < go_flash_until_ms:
-		countdown_label.text = "GO !"
-		countdown_label.visible = true
-	else:
-		countdown_label.visible = false
-	if countdown_label.visible and countdown_label.text != last_countdown_value:
-		last_countdown_value = countdown_label.text
-		if countdown_label.text == "GO !":
-			_play_tone(440.0, 0.22, 0.2, "square", 440.0)
-			direction_hint_until_ms = now + 3200
-		else:
-			_play_tone(280.0, 0.11, 0.13, "square")
-	elif not countdown_label.visible:
-		last_countdown_value = ""
+	race_hud.update_countdown(race_phase, race_start_deadline_ms, go_flash_until_ms)
 
 
 func _update_music(delta: float) -> void:
@@ -1445,93 +1100,28 @@ func _update_music(delta: float) -> void:
 
 
 func _update_race_hud() -> void:
-	var show_race_hud := not room_code.is_empty() and not race_complete and race_phase != "waiting"
-	rank_label.visible = show_race_hud
-	if show_race_hud:
-		var ordered_players := players.duplicate()
-		ordered_players.sort_custom(_sort_live_race)
-		for index in range(ordered_players.size()):
-			if str(ordered_players[index].get("id", "")) == player_id:
-				rank_label.text = "%d%s / %d" % [
-					index + 1,
-					"er" if index == 0 else "e",
-					ordered_players.size(),
-				]
-				break
-
-	var effect_texts: Array[String] = []
-	for effect in ["speed", "slow", "confused", "frozen"]:
-		var remaining := _local_effect_remaining(effect)
-		if remaining <= 0.0:
-			continue
-		var names := {
-			"speed": "TURBO",
-			"slow": "RALENTI",
-			"confused": "COMMANDES INVERSÉES",
-			"frozen": "GELÉ",
-		}
-		effect_texts.append("%s  %.1fs" % [names[effect], remaining])
-	if _local_effect_active("shield"):
-		effect_texts.append("BOUCLIER")
-	effect_hud_label.visible = not effect_texts.is_empty()
-	effect_hud_label.text = "  •  ".join(effect_texts)
-
-
-func _sort_live_race(first: Dictionary, second: Dictionary) -> bool:
-	var first_finished := bool(first.get("finished", false))
-	var second_finished := bool(second.get("finished", false))
-	if first_finished != second_finished:
-		return first_finished
-	if first_finished:
-		return int(first.get("rank", 999)) < int(second.get("rank", 999))
-	var goal: Dictionary = maze.get("exit", {})
-	var first_distance := absf(float(goal.get("x", 0)) - float(first.get("x", 0)))
-	first_distance += absf(float(goal.get("y", 0)) - float(first.get("y", 0)))
-	var second_distance := absf(float(goal.get("x", 0)) - float(second.get("x", 0)))
-	second_distance += absf(float(goal.get("y", 0)) - float(second.get("y", 0)))
-	return first_distance < second_distance
+	race_hud.update_race_hud(
+		room_code,
+		race_complete,
+		race_phase,
+		players,
+		player_id,
+		maze.get("exit", {}),
+		Callable(self, "_local_effect_remaining"),
+		Callable(self, "_local_effect_active")
+	)
 
 
 func _handle_power_event(event) -> void:
-	if not event is Dictionary:
+	if not game_state.accept_power_event(event):
 		return
-	var event_id := str(event.get("id", ""))
-	if event_id.is_empty() or event_id == last_event_id:
-		return
-	last_event_id = event_id
 	var kind := str(event.get("kind", ""))
-	var color := Color("83e8ff")
-	if kind == "shield":
-		color = Color("ffd166")
-	elif kind == "slow_all" or kind == "confuse_all":
-		color = Color("b58cff")
-	elif kind == "freeze_all":
-		color = Color("8fe7ff")
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(color, 0.92)
-	style.set_corner_radius_all(9)
-	style.content_margin_left = 14
-	style.content_margin_right = 14
-	event_toast.add_theme_stylebox_override("normal", style)
-	var luminance := color.r * 0.299 + color.g * 0.587 + color.b * 0.114
-	event_toast.add_theme_color_override(
-		"font_color",
-		Color("07101b") if luminance > 0.58 else Color.WHITE
-	)
-	event_toast.text = str(event.get("message", "Objet mystère activé !"))
-	event_toast_timer = 3.0
-	event_toast.visible = true
-	if kind == "speed":
-		_play_tone(420.0, 0.2, 0.18, "square", 380.0)
-	elif kind == "shield":
-		_play_tone(660.0, 0.24, 0.15, "sine", 220.0)
-	else:
-		_play_tone(180.0, 0.28, 0.15, "square", -80.0)
-	_spawn_pickup_particles(event, color)
+	race_hud.show_power_event(event)
+	_spawn_pickup_particles(event, RaceVisuals.power_event_color(kind))
 
 
 func _spawn_pickup_particles(event: Dictionary, color: Color) -> void:
-	var start := Vector2(float(event.get("x", 0)) + 0.5, float(event.get("y", 0)) + 0.5)
+	var start := GameState.grid_center(event)
 	for index in range(14):
 		pickup_particles.append(
 			{
@@ -1546,66 +1136,25 @@ func _spawn_pickup_particles(event: Dictionary, color: Color) -> void:
 
 
 func _update_player_tooltip() -> void:
-	if maze.is_empty() or last_cell_size <= 0.0 or race_complete:
-		player_tooltip.visible = false
-		hovered_player_id = ""
+	world_renderer.update_player_tooltip(player_tooltip, get_viewport().get_mouse_position())
+
+
+func _sync_world_renderer() -> void:
+	if not is_instance_valid(world_renderer):
 		return
-
-	var mouse_position := get_viewport().get_mouse_position()
-	var hovered_player: Dictionary = {}
-	var closest_distance := INF
-	for player in players:
-		var id := str(player.get("id", ""))
-		var target := Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
-		var visual_position: Vector2 = visual_positions.get(id, target)
-		var center := last_maze_origin + (visual_position + Vector2(0.5, 0.5)) * last_cell_size
-		var distance := mouse_position.distance_to(center)
-		if distance <= last_cell_size * 0.38 + 6.0 and distance < closest_distance:
-			hovered_player = player
-			closest_distance = distance
-
-	if hovered_player.is_empty():
-		player_tooltip.visible = false
-		hovered_player_id = ""
-		return
-
-	var id := str(hovered_player.get("id", ""))
-	var target := Vector2(
-		float(hovered_player.get("x", 0)),
-		float(hovered_player.get("y", 0))
+	world_renderer.set_timers(
+		animation_time,
+		wall_hit_timer,
+		power_down_flash_timer,
+		power_down_flash_color,
+		wall_shake_enabled
 	)
-	var visual_position: Vector2 = visual_positions.get(id, target)
-	var center := last_maze_origin + (visual_position + Vector2(0.5, 0.5)) * last_cell_size
-	if hovered_player_id != id:
-		hovered_player_id = id
-		var color := Color.from_string(
-			str(hovered_player.get("color", "#ffffff")),
-			Color.WHITE
-		)
-		var style := StyleBoxFlat.new()
-		style.bg_color = color
-		style.set_corner_radius_all(6)
-		style.content_margin_left = 10
-		style.content_margin_right = 10
-		style.content_margin_top = 5
-		style.content_margin_bottom = 5
-		player_tooltip.add_theme_stylebox_override("normal", style)
-		var luminance := color.r * 0.299 + color.g * 0.587 + color.b * 0.114
-		var text_color := Color("07101b") if luminance > 0.58 else Color.WHITE
-		player_tooltip.add_theme_color_override("font_color", text_color)
-		player_tooltip.text = str(hovered_player.get("name", "Joueur"))
-		player_tooltip.reset_size()
-		player_tooltip.size = player_tooltip.get_combined_minimum_size()
 
-	var tooltip_position := center - Vector2(
-		player_tooltip.size.x * 0.5,
-		last_cell_size * 0.38 + player_tooltip.size.y + 10.0
-	)
-	var viewport_size := get_viewport_rect().size
-	tooltip_position.x = clampf(tooltip_position.x, 6.0, viewport_size.x - player_tooltip.size.x - 6.0)
-	tooltip_position.y = maxf(6.0, tooltip_position.y)
-	player_tooltip.position = tooltip_position
-	player_tooltip.visible = true
+
+func _queue_world_redraw() -> void:
+	_sync_world_renderer()
+	if is_instance_valid(world_renderer):
+		world_renderer.queue_redraw()
 
 
 func _input_direction(allow_keyboard: bool = true) -> String:
@@ -1650,569 +1199,6 @@ func _gamepad_direction() -> String:
 			return "right" if stick.x > 0.0 else "left"
 		return "down" if stick.y > 0.0 else "up"
 	return ""
-
-
-func _draw() -> void:
-	var viewport_size := get_viewport_rect().size
-	_draw_background(viewport_size)
-	if maze.is_empty():
-		_draw_idle_mark(viewport_size)
-		return
-
-	var width := int(maze.get("width", 1))
-	var height := int(maze.get("height", 1))
-	var top_margin := 72.0
-	if room_code.is_empty():
-		top_margin = maxf(174.0, panel.size.y + 28.0 if panel else 174.0)
-	elif race_phase == "waiting":
-		top_margin = 190.0
-	var available := Vector2(viewport_size.x - 48.0, viewport_size.y - top_margin - 58.0)
-	var cell_size := floorf(minf(available.x / width, available.y / height))
-	cell_size = maxf(cell_size, 8.0)
-	var maze_size := Vector2(width * cell_size, height * cell_size)
-	var origin := Vector2(
-		(viewport_size.x - maze_size.x) * 0.5,
-		top_margin + (available.y - maze_size.y) * 0.5
-	)
-	if wall_shake_enabled and wall_hit_timer > 0.0:
-		var shake := wall_hit_timer / 0.16 * 2.8
-		origin += Vector2(sin(animation_time * 91.0), cos(animation_time * 77.0)) * shake
-	last_maze_origin = origin
-	last_cell_size = cell_size
-
-	var maze_backing := Color("0d1b2d")
-	if wall_hit_timer > 0.0:
-		maze_backing = maze_backing.lerp(Color("54203a"), wall_hit_timer / 0.16 * 0.35)
-	draw_rect(Rect2(origin - Vector2(7, 7), maze_size + Vector2(14, 14)), maze_backing, true)
-	_draw_goal(origin, cell_size)
-	_draw_direction_hint(origin, cell_size)
-	_draw_power_ups(origin, cell_size)
-	_draw_trails(origin, cell_size)
-	_draw_movement_ripples(origin, cell_size)
-	_draw_pickup_particles(origin, cell_size)
-	_draw_maze_walls(origin, cell_size, width, height)
-	_draw_celebration(origin, cell_size)
-	_draw_players(origin, cell_size)
-	_draw_power_down_screen_fx(viewport_size)
-	_draw_countdown_fx(viewport_size)
-
-
-func _draw_power_down_screen_fx(viewport_size: Vector2) -> void:
-	if _local_effect_active("slow"):
-		_draw_slow_screen_fx(viewport_size, _power_down_fade("slow"))
-	if _local_effect_active("confused"):
-		_draw_confused_screen_fx(viewport_size, _power_down_fade("confused"))
-	if _local_effect_active("frozen"):
-		_draw_frozen_screen_fx(viewport_size, _power_down_fade("frozen"))
-	if power_down_flash_timer > 0.0:
-		var flash := clampf(power_down_flash_timer / 0.46, 0.0, 1.0)
-		draw_rect(
-			Rect2(Vector2.ZERO, viewport_size),
-			Color(power_down_flash_color, flash * 0.11),
-			true
-		)
-		draw_arc(
-			viewport_size * 0.5,
-			lerpf(28.0, minf(viewport_size.x, viewport_size.y) * 0.42, 1.0 - flash),
-			0.0,
-			TAU,
-			64,
-			Color(power_down_flash_color, flash * 0.58),
-			lerpf(7.0, 2.0, 1.0 - flash),
-			true
-		)
-
-
-func _power_down_fade(effect_name: String) -> float:
-	return clampf(_local_effect_remaining(effect_name) * 2.5, 0.0, 1.0)
-
-
-func _draw_edge_vignette(viewport_size: Vector2, color: Color, strength: float) -> void:
-	var edge_size := clampf(minf(viewport_size.x, viewport_size.y) * 0.13, 52.0, 112.0)
-	for layer in range(7):
-		var progress := float(layer) / 6.0
-		var depth := lerpf(edge_size, 5.0, progress)
-		var alpha := strength * lerpf(0.015, 0.055, progress)
-		var layer_color := Color(color, alpha)
-		draw_rect(Rect2(0.0, 0.0, viewport_size.x, depth), layer_color, true)
-		draw_rect(
-			Rect2(0.0, viewport_size.y - depth, viewport_size.x, depth),
-			layer_color,
-			true
-		)
-		draw_rect(Rect2(0.0, 0.0, depth, viewport_size.y), layer_color, true)
-		draw_rect(
-			Rect2(viewport_size.x - depth, 0.0, depth, viewport_size.y),
-			layer_color,
-			true
-		)
-
-
-func _draw_slow_screen_fx(viewport_size: Vector2, fade: float) -> void:
-	var color := Color("9b64e8")
-	var pulse := 0.72 + (sin(animation_time * 2.0) + 1.0) * 0.14
-	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(color, 0.025 * fade), true)
-	_draw_edge_vignette(viewport_size, color, pulse * fade)
-	for side in range(2):
-		var direction := 1.0 if side == 0 else -1.0
-		var edge_x := 0.0 if side == 0 else viewport_size.x
-		for streak in range(5):
-			var y := fmod(animation_time * 21.0 + streak * viewport_size.y / 5.0, viewport_size.y)
-			var length := 54.0 + streak * 11.0
-			var wave := sin(animation_time * 1.7 + streak * 1.3) * 9.0
-			draw_line(
-				Vector2(edge_x, y),
-				Vector2(edge_x + direction * length, y + wave),
-				Color(color, (0.16 + streak * 0.018) * fade),
-				3.0,
-				true
-			)
-
-
-func _draw_confused_screen_fx(viewport_size: Vector2, fade: float) -> void:
-	var cyan := Color("45d9ff")
-	var magenta := Color("ff5ca8")
-	var wobble := sin(animation_time * 6.0) * 6.0
-	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(magenta, 0.018 * fade), true)
-	draw_rect(
-		Rect2(Vector2(8.0 + wobble, 9.0), viewport_size - Vector2(18.0, 18.0)),
-		Color(cyan, 0.42 * fade),
-		false,
-		2.0,
-		true
-	)
-	draw_rect(
-		Rect2(Vector2(10.0 - wobble, 11.0), viewport_size - Vector2(18.0, 18.0)),
-		Color(magenta, 0.38 * fade),
-		false,
-		2.0,
-		true
-	)
-	var corners := [
-		Vector2.ZERO,
-		Vector2(viewport_size.x, 0.0),
-		viewport_size,
-		Vector2(0.0, viewport_size.y),
-	]
-	for index in range(corners.size()):
-		var start := index * PI * 0.5 + animation_time * 0.75
-		draw_arc(
-			corners[index],
-			72.0 + sin(animation_time * 3.0 + index) * 8.0,
-			start,
-			start + PI * 0.72,
-			20,
-			Color(cyan if index % 2 == 0 else magenta, 0.48 * fade),
-			4.0,
-			true
-		)
-
-
-func _draw_frozen_screen_fx(viewport_size: Vector2, fade: float) -> void:
-	var ice := Color("8fe7ff")
-	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(ice, 0.04 * fade), true)
-	_draw_edge_vignette(viewport_size, ice, 1.15 * fade)
-	var corner_data := [
-		[Vector2.ZERO, Vector2(1.0, 1.0)],
-		[Vector2(viewport_size.x, 0.0), Vector2(-1.0, 1.0)],
-		[viewport_size, Vector2(-1.0, -1.0)],
-		[Vector2(0.0, viewport_size.y), Vector2(1.0, -1.0)],
-	]
-	for index in range(corner_data.size()):
-		var corner: Vector2 = corner_data[index][0]
-		var direction: Vector2 = corner_data[index][1]
-		var bend := Vector2(direction.x * (88.0 + index * 8.0), direction.y * 42.0)
-		var tip := corner + bend
-		draw_line(corner, tip, Color(ice, 0.58 * fade), 3.0, true)
-		draw_line(
-			tip,
-			tip + Vector2(direction.x * 34.0, direction.y * 45.0),
-			Color(ice, 0.38 * fade),
-			2.0,
-			true
-		)
-		draw_line(
-			tip,
-			tip + Vector2(direction.x * 48.0, -direction.y * 8.0),
-			Color(ice, 0.32 * fade),
-			2.0,
-			true
-		)
-	for flake in range(16):
-		var side := flake % 4
-		var along := fmod(flake * 79.0 + animation_time * 13.0, 620.0) / 620.0
-		var inset := 18.0 + float((flake * 17) % 34)
-		var center := Vector2.ZERO
-		if side == 0:
-			center = Vector2(along * viewport_size.x, inset)
-		elif side == 1:
-			center = Vector2(viewport_size.x - inset, along * viewport_size.y)
-		elif side == 2:
-			center = Vector2((1.0 - along) * viewport_size.x, viewport_size.y - inset)
-		else:
-			center = Vector2(inset, (1.0 - along) * viewport_size.y)
-		var radius := 2.0 + float(flake % 3)
-		draw_line(
-			center - Vector2(radius, 0.0),
-			center + Vector2(radius, 0.0),
-			Color(ice, 0.45 * fade),
-			1.4,
-			true
-		)
-		draw_line(
-			center - Vector2(0.0, radius),
-			center + Vector2(0.0, radius),
-			Color(ice, 0.45 * fade),
-			1.4,
-			true
-		)
-
-
-func _draw_background(viewport_size: Vector2) -> void:
-	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color("07101b"))
-	for index in range(28):
-		var x := fmod(31.0 + index * 97.0, viewport_size.x)
-		var y := fmod(
-			47.0 + index * 61.0 + sin(animation_time * 0.35 + index) * 12.0,
-			viewport_size.y
-		)
-		var alpha := 0.08 + (sin(animation_time * 0.8 + index * 1.7) + 1.0) * 0.035
-		draw_circle(Vector2(x, y), 1.2 + index % 3 * 0.45, Color(0.4, 0.75, 0.95, alpha))
-
-
-func _draw_idle_mark(viewport_size: Vector2) -> void:
-	var panel_bottom := panel.position.y + panel.size.y if panel else viewport_size.y * 0.5
-	var center := Vector2(
-		viewport_size.x * 0.5,
-		minf(viewport_size.y - 90.0, panel_bottom + 78.0)
-	)
-	var pulse := 1.0 + sin(animation_time * 2.8) * 0.09
-	draw_circle(center, 24.0 * pulse, Color(0.18, 0.75, 0.95, 0.08))
-	draw_circle(center, 13.0 * pulse, Color("83e8ff"))
-	draw_arc(
-		center,
-		34.0 * pulse,
-		animation_time,
-		animation_time + PI * 1.45,
-		48,
-		Color("3f6f91"),
-		3.0,
-		true
-	)
-
-
-func _draw_goal(origin: Vector2, cell_size: float) -> void:
-	var goal: Dictionary = maze.get("exit", {})
-	var center := origin + Vector2(
-		(float(goal.get("x", 0)) + 0.5) * cell_size,
-		(float(goal.get("y", 0)) + 0.5) * cell_size
-	)
-	var pulse := 1.0 + sin(animation_time * 4.2) * 0.1
-	draw_circle(center, cell_size * 0.46 * pulse, Color(1.0, 0.75, 0.25, 0.09))
-	draw_circle(center, cell_size * 0.31 * pulse, Color("ffd166"))
-	draw_circle(center, cell_size * 0.15, Color("6b4e13"))
-	draw_arc(
-		center,
-		cell_size * 0.39,
-		-animation_time * 1.8,
-		-animation_time * 1.8 + PI * 1.25,
-		28,
-		Color(1.0, 0.93, 0.62, 0.8),
-		clampf(cell_size * 0.045, 1.2, 2.5),
-		true
-	)
-
-
-func _draw_power_ups(origin: Vector2, cell_size: float) -> void:
-	for index in range(power_ups.size()):
-		var power_up: Dictionary = power_ups[index]
-		var center := origin + Vector2(
-			(float(power_up.get("x", 0)) + 0.5) * cell_size,
-			(float(power_up.get("y", 0)) + 0.5) * cell_size
-		)
-		center.y += sin(animation_time * 3.2 + index) * cell_size * 0.07
-		if not bool(power_up.get("active", true)):
-			var elapsed := Time.get_ticks_msec() - power_ups_snapshot_local_ms
-			var remaining := maxf(0.0, float(power_up.get("respawnMs", 0)) - elapsed)
-			var progress := clampf(1.0 - remaining / 8000.0, 0.0, 1.0)
-			var warning_alpha := 0.18
-			if remaining < 2000.0:
-				warning_alpha = 0.35 + (sin(animation_time * 9.0) + 1.0) * 0.18
-			draw_arc(
-				center,
-				cell_size * 0.24,
-				-PI * 0.5,
-				-PI * 0.5 + TAU * progress,
-				28,
-				Color(0.49, 0.87, 1.0, warning_alpha),
-				clampf(cell_size * 0.055, 1.2, 2.5),
-				true
-			)
-			continue
-		var pulse := 1.0 + sin(animation_time * 5.0 + index) * 0.1
-		var radius := clampf(cell_size * 0.25 * pulse, 3.5, 12.0)
-		draw_circle(center, radius + 7.0, Color(0.45, 0.75, 1.0, 0.1))
-		var points := PackedVector2Array()
-		for corner in range(4):
-			var angle := animation_time * 1.8 + corner * PI * 0.5
-			points.append(center + Vector2.from_angle(angle) * radius)
-		draw_colored_polygon(points, Color("7bdfff"))
-		for segment in range(4):
-			var segment_color := Color(CELEBRATION_COLORS[segment])
-			draw_arc(
-				center,
-				radius * 0.72,
-				animation_time * 2.2 + segment * PI * 0.5,
-				animation_time * 2.2 + segment * PI * 0.5 + PI * 0.36,
-				8,
-				segment_color,
-				clampf(cell_size * 0.055, 1.2, 2.4),
-				true
-			)
-		draw_circle(center, radius * 0.22, Color.WHITE)
-
-
-func _draw_direction_hint(origin: Vector2, cell_size: float) -> void:
-	if Time.get_ticks_msec() >= direction_hint_until_ms:
-		return
-	var player := _get_local_player()
-	if player.is_empty():
-		return
-	var id := str(player.get("id", ""))
-	var position: Vector2 = visual_positions.get(
-		id,
-		Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
-	)
-	var from := origin + (position + Vector2(0.5, 0.5)) * cell_size
-	var goal: Dictionary = maze.get("exit", {})
-	var to := origin + Vector2(
-		(float(goal.get("x", 0)) + 0.5) * cell_size,
-		(float(goal.get("y", 0)) + 0.5) * cell_size
-	)
-	for segment in range(14):
-		if segment % 2 == 1:
-			continue
-		var start := from.lerp(to, float(segment) / 14.0)
-		var end := from.lerp(to, float(segment + 1) / 14.0)
-		draw_line(start, end, Color(1.0, 0.82, 0.36, 0.24), 2.0, true)
-
-
-func _draw_trails(origin: Vector2, cell_size: float) -> void:
-	for mark in trail_marks:
-		var position: Vector2 = mark.get("position", Vector2.ZERO)
-		var life_ratio := clampf(
-			float(mark.get("life", 0.0)) / float(mark.get("max_life", 1.0)),
-			0.0,
-			1.0
-		)
-		var color: Color = mark.get("color", Color.WHITE)
-		color.a = life_ratio * 0.28
-		var center := origin + (position + Vector2(0.5, 0.5)) * cell_size
-		draw_circle(center, cell_size * 0.18 * life_ratio, color)
-
-
-func _draw_movement_ripples(origin: Vector2, cell_size: float) -> void:
-	for ripple in movement_ripples:
-		var life_ratio := clampf(
-			float(ripple.get("life", 0.0)) / float(ripple.get("max_life", 1.0)),
-			0.0,
-			1.0
-		)
-		var position: Vector2 = ripple.get("position", Vector2.ZERO)
-		var center := origin + (position + Vector2(0.5, 0.5)) * cell_size
-		var color: Color = ripple.get("color", Color.WHITE)
-		color.a = life_ratio * 0.4
-		var radius := cell_size * (0.12 + (1.0 - life_ratio) * 0.34)
-		draw_arc(center, radius, 0.0, TAU, 28, color, 2.0, true)
-
-
-func _draw_pickup_particles(origin: Vector2, cell_size: float) -> void:
-	for particle in pickup_particles:
-		var life_ratio := clampf(
-			float(particle.get("life", 0.0)) / float(particle.get("max_life", 1.0)),
-			0.0,
-			1.0
-		)
-		var target_id := str(particle.get("target_id", ""))
-		var target: Vector2 = visual_positions.get(target_id, particle.get("start", Vector2.ZERO))
-		var start: Vector2 = particle.get("start", Vector2.ZERO)
-		var progress := 1.0 - life_ratio
-		var position := start.lerp(target + Vector2(0.5, 0.5), progress * progress)
-		position += Vector2(0, sin(progress * PI) * float(particle.get("curve", 0.0)))
-		var center := origin + position * cell_size
-		var color: Color = particle.get("color", Color.WHITE)
-		color.a = life_ratio
-		draw_circle(center, clampf(cell_size * 0.06 * life_ratio, 1.2, 3.5), color)
-
-
-func _draw_celebration(origin: Vector2, cell_size: float) -> void:
-	for particle in celebration_particles:
-		var position: Vector2 = particle.get("position", Vector2.ZERO)
-		var life_ratio := clampf(
-			float(particle.get("life", 0.0)) / float(particle.get("max_life", 1.0)),
-			0.0,
-			1.0
-		)
-		var color: Color = particle.get("color", Color.WHITE)
-		color.a = life_ratio
-		var center := origin + position * cell_size
-		var radius := clampf(cell_size * 0.085 * life_ratio, 1.5, 5.0)
-		draw_circle(center, radius, color)
-
-
-func _draw_maze_walls(origin: Vector2, cell_size: float, width: int, height: int) -> void:
-	var cells: Array = maze.get("cells", [])
-	var wall_color := Color("c6d5e8")
-	var wall_width := clampf(cell_size * 0.085, 2.0, 5.0)
-	for y in range(height):
-		for x in range(width):
-			var index := y * width + x
-			if index >= cells.size():
-				continue
-			var walls := int(cells[index])
-			var p := origin + Vector2(x * cell_size, y * cell_size)
-			if walls & WALL_TOP:
-				draw_line(p, p + Vector2(cell_size, 0), wall_color, wall_width, true)
-			if walls & WALL_LEFT:
-				draw_line(p, p + Vector2(0, cell_size), wall_color, wall_width, true)
-			if y == height - 1 and walls & WALL_BOTTOM:
-				draw_line(
-					p + Vector2(0, cell_size),
-					p + Vector2(cell_size, cell_size),
-					wall_color,
-					wall_width,
-					true
-				)
-			if x == width - 1 and walls & WALL_RIGHT:
-				draw_line(
-					p + Vector2(cell_size, 0),
-					p + Vector2(cell_size, cell_size),
-					wall_color,
-					wall_width,
-					true
-				)
-
-
-func _draw_players(origin: Vector2, cell_size: float) -> void:
-	for player in players:
-		var id := str(player.get("id", ""))
-		var target := Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
-		var visual_position: Vector2 = visual_positions.get(id, target)
-		var center := origin + (visual_position + Vector2(0.5, 0.5)) * cell_size
-		var color := Color.from_string(str(player.get("color", "#ffffff")), Color.WHITE)
-		var effects: Dictionary = player.get("effects", {})
-		var radius := clampf(cell_size * 0.27, 4.0, 14.0)
-		var movement := target - visual_position
-		var body_angle := 0.0
-		var body_scale := Vector2.ONE
-		if movement.length_squared() > 0.0005:
-			body_angle = movement.angle()
-			var stretch := clampf(movement.length() * 0.7, 0.0, 0.24)
-			body_scale = Vector2(1.0 + stretch, 1.0 - stretch * 0.66)
-		else:
-			var breathing := sin(animation_time * 5.0 + float(id.hash() % 11)) * 0.025
-			body_scale = Vector2(1.0 + breathing, 1.0 - breathing)
-		if id == player_id and wall_hit_timer > 0.0:
-			var hit_strength := clampf(wall_hit_timer / 0.18, 0.0, 1.0)
-			body_scale *= Vector2(
-				lerpf(1.0, 0.76, hit_strength),
-				lerpf(1.0, 1.2, hit_strength)
-			)
-		if race_phase == "countdown" and Time.get_ticks_msec() < race_start_deadline_ms:
-			var urgency := clampf(
-				1.0 - float(race_start_deadline_ms - Time.get_ticks_msec()) / 3500.0,
-				0.0,
-				1.0
-			)
-			var phase := animation_time * lerpf(18.0, 42.0, urgency) + float(id.hash() % 17)
-			center += Vector2(sin(phase), cos(phase * 1.37)) * urgency * 1.8
-		var glow := color
-		glow.a = 0.13 + (sin(animation_time * 5.0 + center.x) + 1.0) * 0.025
-		draw_circle(center, radius + 8.0, glow)
-		draw_set_transform(center, body_angle, body_scale)
-		draw_circle(Vector2(0, 2), radius + 3.0, Color(0.01, 0.03, 0.06, 0.85))
-		var avatar_url := str(player.get("avatarUrl", ""))
-		var avatar_texture = avatar_loader.get_texture(avatar_url)
-		if avatar_texture is Texture2D:
-			draw_circle(Vector2.ZERO, radius + 1.5, color)
-			draw_texture_rect(
-				avatar_texture,
-				Rect2(Vector2(-radius, -radius), Vector2(radius * 2.0, radius * 2.0)),
-				false
-			)
-		else:
-			draw_circle(Vector2.ZERO, radius, color)
-			draw_circle(
-				Vector2(-radius * 0.28, -radius * 0.28),
-				radius * 0.22,
-				Color(1, 1, 1, 0.55)
-			)
-		if _effect_active(effects, "frozen"):
-			draw_circle(Vector2.ZERO, radius * 0.82, Color(0.65, 0.94, 1.0, 0.55))
-		draw_set_transform(Vector2.ZERO)
-		if _effect_active(effects, "shield"):
-			draw_arc(center, radius + 8.0, 0.0, TAU, 36, Color("ffd166"), 3.0, true)
-		if _effect_active(effects, "speed"):
-			draw_arc(
-				center,
-				radius + 9.0,
-				animation_time * 5.0,
-				animation_time * 5.0 + PI * 1.2,
-				24,
-				Color("45d9ff"),
-				3.0,
-				true
-			)
-		if _effect_active(effects, "slow") or _effect_active(effects, "confused"):
-			draw_arc(
-				center,
-				radius + 9.0,
-				-animation_time * 2.5,
-				-animation_time * 2.5 + PI * 1.4,
-				24,
-				Color("b58cff"),
-				3.0,
-				true
-			)
-		if id == player_id:
-			draw_arc(
-				center,
-				radius + 5.0,
-				animation_time * 2.2,
-				animation_time * 2.2 + PI * 1.55,
-				28,
-				Color.WHITE,
-				2.0,
-				true
-			)
-
-
-func _draw_countdown_fx(viewport_size: Vector2) -> void:
-	var now := Time.get_ticks_msec()
-	if race_phase == "countdown" and now < race_start_deadline_ms:
-		draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(0.01, 0.02, 0.04, 0.34), true)
-	var flash_remaining := go_flash_until_ms - now
-	if race_phase == "countdown" and now >= race_start_deadline_ms:
-		flash_remaining = maxi(flash_remaining, race_start_deadline_ms + 700 - now)
-	if flash_remaining <= 0:
-		return
-	var progress := clampf(1.0 - flash_remaining / 700.0, 0.0, 1.0)
-	draw_rect(
-		Rect2(Vector2.ZERO, viewport_size),
-		Color(1.0, 0.9, 0.55, (1.0 - progress) * 0.16),
-		true
-	)
-	var center := viewport_size * 0.5
-	draw_arc(
-		center,
-		lerpf(20.0, maxf(viewport_size.x, viewport_size.y) * 0.65, progress),
-		0.0,
-		TAU,
-		72,
-		Color(1.0, 0.86, 0.4, (1.0 - progress) * 0.75),
-		lerpf(8.0, 2.0, progress),
-		true
-	)
 
 
 func _on_create_pressed() -> void:
@@ -2306,4 +1292,4 @@ func _on_score_restart_pressed() -> void:
 func _on_viewport_resized() -> void:
 	_layout_lobby_panel()
 	_layout_menu_debug_panel()
-	queue_redraw()
+	_queue_world_redraw()

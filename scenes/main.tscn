@@ -1,30 +1,46 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene format=3 uid="uid://bfociafy3q60c"]
 
-[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-[ext_resource type="Script" path="res://scripts/services/settings_store.gd" id="2_settings"]
-[ext_resource type="Script" path="res://scripts/services/audio_director.gd" id="3_audio"]
-[ext_resource type="Script" path="res://scripts/services/network_client.gd" id="4_network"]
-[ext_resource type="Script" path="res://scripts/services/avatar_loader.gd" id="5_avatar"]
-[ext_resource type="Script" path="res://scripts/ui/debug_overlay.gd" id="6_debug"]
-[ext_resource type="Script" path="res://scripts/services/discord_bridge.gd" id="7_discord"]
+[ext_resource type="Script" uid="uid://bl8na4q188edl" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://dufu8vy3ka6f0" path="res://scripts/services/settings_store.gd" id="2_settings"]
+[ext_resource type="Script" uid="uid://bljjbqdrml1i8" path="res://scripts/services/audio_director.gd" id="3_audio"]
+[ext_resource type="Script" uid="uid://hr0ingruacby" path="res://scripts/services/network_client.gd" id="4_network"]
+[ext_resource type="Script" uid="uid://bu8mkuuj4qc30" path="res://scripts/services/avatar_loader.gd" id="5_avatar"]
+[ext_resource type="Script" uid="uid://cou6vg7q6po8q" path="res://scripts/ui/debug_overlay.gd" id="6_debug"]
+[ext_resource type="Script" uid="uid://bykxkk7swkpcj" path="res://scripts/services/discord_bridge.gd" id="7_discord"]
+[ext_resource type="Script" path="res://scripts/ui/scoreboard_panel.gd" id="8_scoreboard"]
+[ext_resource type="Script" path="res://scripts/ui/race_hud.gd" id="9_race_hud"]
+[ext_resource type="Script" path="res://scripts/models/game_state.gd" id="10_game_state"]
+[ext_resource type="Script" path="res://scripts/views/world_renderer.gd" id="11_world_renderer"]
 
-[node name="MazeGame" type="Node2D"]
+[node name="MazeGame" type="Node2D" unique_id=1033153060]
 script = ExtResource("1_main")
 
-[node name="SettingsStore" type="Node" parent="."]
+[node name="SettingsStore" type="Node" parent="." unique_id=104318049]
 script = ExtResource("2_settings")
 
-[node name="AudioDirector" type="Node" parent="."]
+[node name="AudioDirector" type="Node" parent="." unique_id=1421905700]
 script = ExtResource("3_audio")
 
-[node name="NetworkClient" type="Node" parent="."]
+[node name="NetworkClient" type="Node" parent="." unique_id=336232602]
 script = ExtResource("4_network")
 
-[node name="AvatarLoader" type="Node" parent="."]
+[node name="AvatarLoader" type="Node" parent="." unique_id=1011815940]
 script = ExtResource("5_avatar")
 
-[node name="DebugOverlay" type="Node" parent="."]
+[node name="DebugOverlay" type="Node" parent="." unique_id=1011204107]
 script = ExtResource("6_debug")
 
-[node name="DiscordBridge" type="Node" parent="."]
+[node name="DiscordBridge" type="Node" parent="." unique_id=1237591801]
 script = ExtResource("7_discord")
+
+[node name="GameState" type="Node" parent="."]
+script = ExtResource("10_game_state")
+
+[node name="WorldRenderer" type="Node2D" parent="."]
+script = ExtResource("11_world_renderer")
+
+[node name="ScoreboardPanel" type="Node" parent="."]
+script = ExtResource("8_scoreboard")
+
+[node name="RaceHud" type="Node" parent="."]
+script = ExtResource("9_race_hud")

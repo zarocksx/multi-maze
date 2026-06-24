@@ -1,4 +1,5 @@
 extends Node
+class_name NetworkClient
 
 signal connecting(url: String)
 signal connection_failed(error_text: String)
