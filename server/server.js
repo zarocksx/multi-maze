@@ -628,8 +628,8 @@ function createGameServer({
 
   function securityHeaders(extra = {}) {
     return {
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "require-corp",
+      //"Cross-Origin-Opener-Policy": "same-origin",
+      //"Cross-Origin-Embedder-Policy": "require-corp",
       ...extra,
     };
   }
@@ -1001,7 +1001,7 @@ function createGameServer({
         client_id: auth.clientId,
         response_type: "code",
         redirect_uri: auth.redirectUri,
-        scope: "identify",
+        scope: "identify guilds guilds.members.read",
         state,
       }).toString();
       redirect(response, authorizeUrl.toString(), [

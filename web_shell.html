@@ -720,13 +720,13 @@ async function initMazeDiscord() {
 			await mazeDiscordSdk.ready();
 			mazeDiscordState.sdkReady = true;
 			mazeDiscordDebugLog('ok', 'SDK Discord pret');
-			await refreshMazeDiscordParticipants();
+			/*await refreshMazeDiscordParticipants();
 			void mazeDiscordSdk.subscribe('ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE', (payload) => {
 				updateMazeDiscordParticipants(payload?.participants);
 			}).catch((error) => {
 				mazeDiscordDebugLog('warn', 'Subscribe participants KO : ' + (error instanceof Error ? error.message : error));
 				console.debug('Abonnement participants Discord Activity impossible', error);
-			});
+			});*/
 			mazeDiscordState.error = '';
 		} catch (error) {
 			mazeDiscordState.error = error instanceof Error ? error.message : 'Discord Activity indisponible.';
@@ -772,11 +772,19 @@ async function authenticateMazeDiscord(scopes = ['identify',"guilds","guilds.mem
 		if (auth == null) {
 			throw new Error('Authentification Activity refusee.');
 		}
+		await refreshMazeDiscordParticipants();
+		void mazeDiscordSdk.subscribe('ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE', (payload) => {
+				updateMazeDiscordParticipants(payload?.participants);
+			}).catch((error) => {
+				mazeDiscordDebugLog('warn', 'Subscribe participants KO : ' + (error instanceof Error ? error.message : error));
+				console.debug('Abonnement participants Discord Activity impossible', error);
+			});
 		setMazeDiscordSessionToken(typeof payload.session === 'string' ? payload.session : '');
 		mazeDiscordState.authenticated = true;
 		setMazeDiscordActivityUser(payload.user);
 		mazeDiscordState.activityScopeReady = Array.isArray(auth.scopes)
 			&& auth.scopes.includes('rpc.activities.write');
+			mazeDiscordDebugLog('discord', 'Authenticated scopes: ' + JSON.stringify(auth.scopes || []));
 		mazeDiscordDebugLog(
 			mazeDiscordState.activityScopeReady ? 'ok' : 'warn',
 			'Authenticate Discord OK' + (mazeDiscordState.activityScopeReady ? ' + Rich Presence' : '')
@@ -790,7 +798,11 @@ async function authenticateMazeDiscord(scopes = ['identify',"guilds","guilds.mem
 
 async function loginMazeDiscord() {
 	try {
-		await authenticateMazeDiscord(['identify', 'rpc.activities.write']);
+		await authenticateMazeDiscord(['identify',
+			'guilds',
+			'guilds.members.read',
+			'rpc.activities.write',
+		]);
 	} catch (error) {
 		mazeDiscordState.authenticated = false;
 		mazeDiscordState.user = null;
