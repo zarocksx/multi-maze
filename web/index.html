@@ -383,15 +383,36 @@ function mazeApiUrl(path, basePath = mazeDiscordState.apiBasePath) {
 function getMazeWebSocketUrl() {
 	const url = new URL(getMazeServerBaseUrl());
 	url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-	url.pathname = `${mazeDiscordState.apiBasePath}/ws`.replace(/\/+/g, '/');
+	const basePath = shouldUseDiscordActivityFlow() ? '/.proxy' : mazeDiscordState.apiBasePath;
+	url.pathname = `${basePath}/ws`.replace(/\/+/g, '/');
 	url.search = '';
 	url.hash = '';
 	return url.toString();
 }
 
+function getMazeWebSocketCandidates() {
+	const bases = shouldUseDiscordActivityFlow()
+		? ['/.proxy', '', mazeDiscordState.apiBasePath]
+		: [mazeDiscordState.apiBasePath, ''];
+	return bases
+		.filter((value, index, values) => values.indexOf(value) === index)
+		.map((basePath) => {
+			const url = new URL(window.location.origin);
+			url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+			url.pathname = `${basePath}/ws`.replace(/\/+/g, '/');
+			return url.toString();
+		});
+}
+
 function mazeActivityProxyPath(pathname) {
 	const proxyBasePath = mazeDiscordState.apiBasePath;
-	if (!shouldUseDiscordActivityFlow() || !proxyBasePath) {
+	if (!shouldUseDiscordActivityFlow()) {
+		return pathname;
+	}
+	if (pathname === '/ws') {
+		return '/.proxy/ws';
+	}
+	if (!proxyBasePath) {
 		return pathname;
 	}
 	if (pathname === proxyBasePath || pathname.startsWith(`${proxyBasePath}/`)) {
@@ -568,7 +589,34 @@ function mazeDiscordDisplayName(user) {
 	return mazePresenceText(user?.global_name || user?.displayName || user?.username, 'Joueur Discord', 32);
 }
 
-function sanitizeMazeDiscordUser(user) {
+function mazeDiscordGuildId() {
+	const sdkGuildId = mazeDiscordSdk != null && typeof mazeDiscordSdk.guildId === 'string'
+		? mazeDiscordSdk.guildId
+		: '';
+	return /^\d+$/.test(sdkGuildId) ? sdkGuildId : '';
+}
+
+function mazeDiscordGuildMemberAvatar(guildMember) {
+	if (guildMember == null || typeof guildMember !== 'object') {
+		return '';
+	}
+	const avatar = guildMember.avatar ?? guildMember.guildAvatar ?? guildMember.guild_avatar;
+	return typeof avatar === 'string' && /^[a-zA-Z0-9_]+$/.test(avatar) ? avatar : '';
+}
+
+function mazeDiscordDefaultAvatarIndex(user, id, discriminator) {
+	const explicit = String(user.defaultAvatar ?? user.default_avatar ?? '');
+	if (/^[0-5]$/.test(explicit)) {
+		return explicit;
+	}
+	try {
+		return String(Number((BigInt(id) >> 22n) % 6n));
+	} catch {
+		return discriminator && discriminator !== '0' ? String(Number(discriminator) % 5) : '0';
+	}
+}
+
+function sanitizeMazeDiscordUser(user, guildMember = null) {
 	if (user == null || typeof user !== 'object') {
 		return null;
 	}
@@ -580,9 +628,16 @@ function sanitizeMazeDiscordUser(user) {
 		? user.avatar
 		: '';
 	const discriminator = typeof user.discriminator === 'string' ? user.discriminator : '';
-	const defaultAvatar = /^[0-5]$/.test(String(user.defaultAvatar ?? user.default_avatar ?? ''))
-		? String(user.defaultAvatar ?? user.default_avatar)
-		: (discriminator && discriminator !== '0' ? String(Number(discriminator) % 5) : '0');
+	const rawGuildId = user.guildId ?? user.guild_id ?? '';
+	const guildIdFromUser = typeof rawGuildId === 'string' && /^\d+$/.test(rawGuildId)
+		? rawGuildId
+		: '';
+	const rawGuildAvatar = user.guildAvatar ?? user.guild_avatar ?? '';
+	const guildAvatarFromUser = typeof rawGuildAvatar === 'string' && /^[a-zA-Z0-9_]+$/.test(rawGuildAvatar)
+		? rawGuildAvatar
+		: '';
+	const guildAvatar = mazeDiscordGuildMemberAvatar(guildMember) || guildAvatarFromUser;
+	const defaultAvatar = mazeDiscordDefaultAvatarIndex(user, id, discriminator);
 	return {
 		id,
 		username: mazePresenceText(user.username, 'Joueur Discord', 32),
@@ -590,23 +645,38 @@ function sanitizeMazeDiscordUser(user) {
 		global_name: typeof user.global_name === 'string' ? user.global_name.slice(0, 32) : null,
 		discriminator,
 		avatar,
+		guildId: guildAvatar ? guildIdFromUser || mazeDiscordGuildId() : '',
+		guildAvatar,
 		defaultAvatar,
 	};
 }
 
-function setMazeDiscordActivityUser(user) {
-	const nextUser = sanitizeMazeDiscordUser(user);
+function setMazeDiscordActivityUser(user, guildMember = null) {
+	const nextUser = sanitizeMazeDiscordUser(user, guildMember);
 	if (nextUser == null) {
 		return false;
+	}
+	if (mazeDiscordState.user != null && mazeDiscordState.user.id === nextUser.id) {
+		nextUser.guildId ||= mazeDiscordState.user.guildId || '';
+		nextUser.guildAvatar ||= mazeDiscordState.user.guildAvatar || '';
 	}
 	mazeDiscordState.user = nextUser;
 	mazeDiscordDebugLog('discord', `Profil Activity reçu : ${mazeDiscordDisplayName(nextUser)}`);
 	return true;
 }
 
+function sanitizeMazeDiscordParticipant(participant) {
+	if (participant == null || typeof participant !== 'object') {
+		return null;
+	}
+	const user = participant.user && typeof participant.user === 'object' ? participant.user : participant;
+	const guildMember = participant.guildMember ?? participant.guild_member ?? participant.member ?? null;
+	return sanitizeMazeDiscordUser(user, guildMember);
+}
+
 function updateMazeDiscordParticipants(participants) {
 	mazeDiscordState.participants = Array.isArray(participants)
-		? participants.map(sanitizeMazeDiscordUser).filter(Boolean)
+		? participants.map(sanitizeMazeDiscordParticipant).filter(Boolean)
 		: [];
 	mazeDiscordDebugLog('discord', `Participants Activity : ${mazeDiscordState.participants.length}`);
 	if (mazeDiscordState.user != null) {
@@ -767,7 +837,7 @@ async function initMazeDiscord() {
 			mazeDiscordSdk = new DiscordSDK(mazeDiscordState.clientId);
 			void mazeDiscordSdk.subscribe('READY', (payload) => {
 				mazeDiscordDebugLog('discord', 'Event READY Discord');
-				setMazeDiscordActivityUser(payload?.user);
+				setMazeDiscordActivityUser(payload?.user, payload?.guildMember ?? payload?.guild_member);
 			});
 			await mazeDiscordSdk.ready();
 			mazeDiscordState.sdkReady = true;
@@ -826,7 +896,7 @@ async function authenticateMazeDiscord(scopes = ['identify'], state = 'maze-acti
 		}
 		setMazeDiscordSessionToken(typeof payload.session === 'string' ? payload.session : '');
 		mazeDiscordState.authenticated = true;
-		setMazeDiscordActivityUser(payload.user);
+		setMazeDiscordActivityUser(auth?.user ?? payload.user, auth?.guildMember ?? auth?.guild_member);
 		mazeDiscordState.activityScopeReady = Array.isArray(auth.scopes)
 			&& auth.scopes.includes('rpc.activities.write');
 		mazeDiscordDebugLog(
@@ -925,6 +995,9 @@ window.mazeDiscord = {
 	},
 	getWebSocketUrl() {
 		return getMazeWebSocketUrl();
+	},
+	getWebSocketCandidatesJson() {
+		return JSON.stringify(getMazeWebSocketCandidates());
 	},
 	getStateJson() {
 		return JSON.stringify(mazeDiscordSnapshot());

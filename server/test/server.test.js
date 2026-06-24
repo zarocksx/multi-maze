@@ -68,6 +68,24 @@ test("les sessions Discord sont signées, expirent et produisent une URL d'avata
     discordAvatarUrl(readAuthSession(session, "test-secret", now)),
     "/api/discord/avatar/123456789012345678/a_012345abcdef.png",
   );
+  const guildSession = createAuthSession({
+    ...user,
+    guildId: "987654321098765432",
+    guildAvatar: "guildavatarhash",
+  }, "test-secret", now);
+  assert.equal(
+    discordAvatarUrl(readAuthSession(guildSession, "test-secret", now)),
+    "/api/discord/avatar/guild/987654321098765432/user/123456789012345678/guildavatarhash.png",
+  );
+  const defaultSession = createAuthSession({
+    id: "333333333333333333",
+    username: "no_avatar",
+    avatar: null,
+  }, "test-secret", now);
+  assert.equal(
+    discordAvatarUrl(readAuthSession(defaultSession, "test-secret", now)),
+    "/api/discord/avatar/default/4.png",
+  );
 });
 
 test("un WebSocket authentifié utilise le nom et l'avatar Discord", async (context) => {
@@ -134,6 +152,8 @@ test("un profil Activity non authentifie fournit pseudo et avatar d'affichage", 
       username: "activity_display",
       displayName: "Profil Activity",
       avatar: "activityhash",
+      guildId: "444444444444444444",
+      guildAvatar: "guildactivityhash",
     },
   }));
   const room = await roomMessage;
@@ -141,7 +161,7 @@ test("un profil Activity non authentifie fournit pseudo et avatar d'affichage", 
   assert.equal(room.players[0].discord, true);
   assert.equal(
     room.players[0].avatarUrl,
-    "/api/discord/avatar/333333333333333333/activityhash.png",
+    "/api/discord/avatar/guild/444444444444444444/user/333333333333333333/guildactivityhash.png",
   );
 });
 

@@ -761,7 +761,8 @@ func _connect_and_send(message: Dictionary) -> void:
 	var url := _default_server_url() if _should_use_discord_activity_flow() else server_input.text.strip_edges()
 	if url.is_empty():
 		url = _default_server_url()
-	network_client.connect_and_send(message, url, discord_bridge.get_session_token())
+	var urls := discord_bridge.websocket_candidate_urls(url) if _should_use_discord_activity_flow() else [url]
+	network_client.connect_and_send_with_candidates(message, urls, discord_bridge.get_session_token())
 
 
 func _send_json(message: Dictionary) -> void:

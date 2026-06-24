@@ -122,14 +122,34 @@ function signValue(value, secret) {
   return crypto.createHmac("sha256", secret).update(value).digest("base64url");
 }
 
+function discordSnowflake(value) {
+  const id = String(value ?? "");
+  return /^\d+$/.test(id) ? id : "";
+}
+
+function discordAvatarHash(value) {
+  return typeof value === "string" && /^[a-zA-Z0-9_]+$/.test(value) ? value : "";
+}
+
+function discordDefaultAvatarIndex(user) {
+  const explicit = String(user?.defaultAvatar ?? user?.default_avatar ?? "");
+  if (/^[0-5]$/.test(explicit)) return explicit;
+  const id = discordSnowflake(user?.id);
+  if (!id) return "0";
+  return String(Number((BigInt(id) >> 22n) % 6n));
+}
+
 function createAuthSession(user, secret, now = Date.now()) {
   if (!secret) throw new Error("Un secret de session est requis.");
+  const avatar = discordAvatarHash(user.avatar);
   const payload = Buffer.from(JSON.stringify({
     id: String(user.id),
     username: String(user.username || "Joueur Discord").slice(0, 32),
     displayName: String(user.global_name || user.displayName || user.username || "Joueur Discord").slice(0, 32),
-    avatar: typeof user.avatar === "string" ? user.avatar : "",
-    defaultAvatar: String(user.avatar ? "" : (user.default_avatar ?? user.defaultAvatar ?? "0")),
+    avatar,
+    guildId: discordSnowflake(user.guildId ?? user.guild_id),
+    guildAvatar: discordAvatarHash(user.guildAvatar ?? user.guild_avatar),
+    defaultAvatar: avatar ? "" : discordDefaultAvatarIndex(user),
     expiresAt: now + AUTH_SESSION_MAX_AGE_MS,
   })).toString("base64url");
   return `${payload}.${signValue(payload, secret)}`;
@@ -145,8 +165,10 @@ function readAuthSession(value, secret, now = Date.now()) {
   if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
   try {
     const user = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!/^\d+$/.test(user.id) || Number(user.expiresAt) <= now) return null;
-    if (user.avatar && !/^[a-zA-Z0-9_]+$/.test(user.avatar)) return null;
+    if (!discordSnowflake(user.id) || Number(user.expiresAt) <= now) return null;
+    if (user.avatar && !discordAvatarHash(user.avatar)) return null;
+    if (user.guildId && !discordSnowflake(user.guildId)) return null;
+    if (user.guildAvatar && !discordAvatarHash(user.guildAvatar)) return null;
     return user;
   } catch {
     return null;
@@ -154,30 +176,37 @@ function readAuthSession(value, secret, now = Date.now()) {
 }
 
 function discordAvatarUrl(user) {
-  if (!user?.id) return "";
-  if (user.avatar && /^[a-zA-Z0-9_]+$/.test(user.avatar)) {
-    return `/api/discord/avatar/${user.id}/${user.avatar}.png`;
+  const id = discordSnowflake(user?.id);
+  if (!id) return "";
+  const guildId = discordSnowflake(user.guildId);
+  const guildAvatar = discordAvatarHash(user.guildAvatar);
+  if (guildId && guildAvatar) {
+    return `/api/discord/avatar/guild/${guildId}/user/${id}/${guildAvatar}.png`;
   }
-  const index = /^[0-5]$/.test(String(user.defaultAvatar)) ? String(user.defaultAvatar) : "0";
+  const avatar = discordAvatarHash(user.avatar);
+  if (avatar) {
+    return `/api/discord/avatar/${id}/${avatar}.png`;
+  }
+  const index = discordDefaultAvatarIndex(user);
   return `/api/discord/avatar/default/${index}.png`;
 }
 
 function discordActivityUserFromMessage(message) {
   const user = message?.discordActivityUser;
   if (!user || typeof user !== "object") return null;
-  const id = String(user.id || "");
-  if (!/^\d+$/.test(id)) return null;
-  const avatar = typeof user.avatar === "string" && /^[a-zA-Z0-9_]+$/.test(user.avatar)
-    ? user.avatar
-    : "";
-  const defaultAvatar = /^[0-5]$/.test(String(user.defaultAvatar ?? user.default_avatar ?? ""))
-    ? String(user.defaultAvatar ?? user.default_avatar)
-    : "0";
+  const id = discordSnowflake(user.id);
+  if (!id) return null;
+  const avatar = discordAvatarHash(user.avatar);
+  const guildId = discordSnowflake(user.guildId ?? user.guild_id);
+  const guildAvatar = discordAvatarHash(user.guildAvatar ?? user.guild_avatar);
+  const defaultAvatar = discordDefaultAvatarIndex(user);
   return {
     id,
     username: String(user.username || "Joueur Discord").slice(0, 32),
     displayName: String(user.displayName || user.global_name || user.username || "Joueur Discord").slice(0, 32),
     avatar,
+    guildId,
+    guildAvatar,
     defaultAvatar,
   };
 }
@@ -791,16 +820,22 @@ function createGameServer({
   }
 
   async function proxyDiscordAvatar(requestUrl, response) {
+    const guildCustom = requestUrl.pathname.match(/^\/api\/discord\/avatar\/guild\/(\d+)\/user\/(\d+)\/([a-zA-Z0-9_]+)\.png$/);
     const custom = requestUrl.pathname.match(/^\/api\/discord\/avatar\/(\d+)\/([a-zA-Z0-9_]+)\.png$/);
     const fallback = requestUrl.pathname.match(/^\/api\/discord\/avatar\/default\/([0-5])\.png$/);
-    if (!custom && !fallback) return false;
+    if (!guildCustom && !custom && !fallback) return false;
     if (typeof fetchImpl !== "function") {
       response.writeHead(503).end("Avatar indisponible");
       return true;
     }
-    const cdnUrl = custom
-      ? `https://cdn.discordapp.com/avatars/${custom[1]}/${custom[2]}.png?size=128`
-      : `https://cdn.discordapp.com/embed/avatars/${fallback[1]}.png`;
+    let cdnUrl = "";
+    if (guildCustom) {
+      cdnUrl = `https://cdn.discordapp.com/guilds/${guildCustom[1]}/users/${guildCustom[2]}/avatars/${guildCustom[3]}.png?size=128`;
+    } else if (custom) {
+      cdnUrl = `https://cdn.discordapp.com/avatars/${custom[1]}/${custom[2]}.png?size=128`;
+    } else {
+      cdnUrl = `https://cdn.discordapp.com/embed/avatars/${fallback[1]}.png`;
+    }
     try {
       const avatarResponse = await fetchImpl(cdnUrl, { headers: { "User-Agent": "A-Maze-Inc/1.0" } });
       if (!avatarResponse.ok) {

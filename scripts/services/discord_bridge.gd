@@ -72,6 +72,28 @@ func default_server_url(fallback_url: String) -> String:
 	return fallback_url
 
 
+func websocket_candidate_urls(fallback_url: String) -> Array:
+	var candidates := []
+	if OS.has_feature("web"):
+		var raw = JavaScriptBridge.eval(
+			"window.mazeDiscord && window.mazeDiscord.getWebSocketCandidatesJson"
+			+ " ? window.mazeDiscord.getWebSocketCandidatesJson() : ''"
+		)
+		if raw is String and str(raw).strip_edges().begins_with("["):
+			var json := JSON.new()
+			if json.parse(str(raw)) == OK and json.data is Array:
+				for candidate in json.data:
+					_append_unique_candidate(candidates, str(candidate))
+	var primary := default_server_url(fallback_url)
+	_append_unique_candidate(candidates, primary)
+	if should_use_activity_flow():
+		_append_unique_candidate(candidates, _activity_websocket_url_variant(primary, true))
+		_append_unique_candidate(candidates, _activity_websocket_url_variant(primary, false))
+	if candidates.is_empty():
+		_append_unique_candidate(candidates, fallback_url)
+	return candidates
+
+
 func http_url(endpoint: String, local_server_url: String = "") -> String:
 	if endpoint.begins_with("http://") or endpoint.begins_with("https://"):
 		return endpoint
@@ -94,6 +116,33 @@ func http_url(endpoint: String, local_server_url: String = "") -> String:
 	while base.ends_with("/"):
 		base = base.left(base.length() - 1)
 	return base + endpoint
+
+
+func _append_unique_candidate(candidates: Array, url: String) -> void:
+	var value := url.strip_edges()
+	if value.is_empty() or candidates.has(value):
+		return
+	candidates.append(value)
+
+
+func _activity_websocket_url_variant(url: String, use_proxy: bool) -> String:
+	if not OS.has_feature("web"):
+		return url
+	var javascript := (
+		"(function(input, useProxy){"
+		+ "try {"
+		+ "const url = new URL(input);"
+		+ "if (useProxy) {"
+		+ " if (!url.pathname.startsWith('/.proxy/')) url.pathname = '/.proxy' + url.pathname;"
+		+ "} else if (url.pathname.startsWith('/.proxy/')) {"
+		+ " url.pathname = url.pathname.slice('/.proxy'.length) || '/ws';"
+		+ "}"
+		+ "return url.toString();"
+		+ "} catch (_) { return input; }"
+		+ "})(%s, %s)" % [JSON.stringify(url), "true" if use_proxy else "false"]
+	)
+	var raw = JavaScriptBridge.eval(javascript)
+	return str(raw) if raw is String and not str(raw).is_empty() else url
 
 
 func should_use_activity_flow() -> bool:
@@ -201,7 +250,17 @@ func add_activity_user(message: Dictionary) -> void:
 	if not should_use_activity_flow() or user.is_empty():
 		return
 	var profile := {}
-	for key in ["id", "username", "displayName", "global_name", "discriminator", "avatar", "defaultAvatar"]:
+	for key in [
+		"id",
+		"username",
+		"displayName",
+		"global_name",
+		"discriminator",
+		"avatar",
+		"defaultAvatar",
+		"guildId",
+		"guildAvatar",
+	]:
 		if user.has(key):
 			profile[key] = user[key]
 	if not profile.is_empty():

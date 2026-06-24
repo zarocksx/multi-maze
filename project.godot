@@ -1,5 +1,10 @@
-; Configuration file generated for A Maze Inc.
-; Edit with Godot 4.3 or newer.
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -7,11 +12,10 @@ config_version=5
 
 config/name="A Maze Inc."
 run/main_scene="res://scenes/main.tscn"
-config/icon="res://assets/launcher_image.jpg"
-boot_splash/image=""
+config/features=PackedStringArray("4.6")
 boot_splash/bg_color=Color(0.027, 0.035, 0.055, 1)
-boot_splash/fullsize=false
-boot_splash/use_filter=true
+boot_splash/stretch_mode=0
+config/icon="res://assets/launcher_image.jpg"
 
 [display]
 

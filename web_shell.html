@@ -310,15 +310,36 @@ function mazeApiUrl(path, basePath = mazeDiscordState.apiBasePath) {
 function getMazeWebSocketUrl() {
 	const url = new URL(getMazeServerBaseUrl());
 	url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-	url.pathname = (mazeDiscordState.apiBasePath + '/ws').replace(/\/+/g, '/');
+	const basePath = shouldUseDiscordActivityFlow() ? '/.proxy' : mazeDiscordState.apiBasePath;
+	url.pathname = (basePath + '/ws').replace(/\/+/g, '/');
 	url.search = '';
 	url.hash = '';
 	return url.toString();
 }
 
+function getMazeWebSocketCandidates() {
+	const bases = shouldUseDiscordActivityFlow()
+		? ['/.proxy', '', mazeDiscordState.apiBasePath]
+		: [mazeDiscordState.apiBasePath, ''];
+	return bases
+		.filter((value, index, values) => values.indexOf(value) === index)
+		.map((basePath) => {
+			const url = new URL(window.location.origin);
+			url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+			url.pathname = (basePath + '/ws').replace(/\/+/g, '/');
+			return url.toString();
+		});
+}
+
 function mazeActivityProxyPath(pathname) {
 	const proxyBasePath = mazeDiscordState.apiBasePath;
-	if (!shouldUseDiscordActivityFlow() || !proxyBasePath) {
+	if (!shouldUseDiscordActivityFlow()) {
+		return pathname;
+	}
+	if (pathname === '/ws') {
+		return '/.proxy/ws';
+	}
+	if (!proxyBasePath) {
 		return pathname;
 	}
 	if (pathname === proxyBasePath || pathname.startsWith(proxyBasePath + '/')) {
@@ -852,6 +873,9 @@ window.mazeDiscord = {
 	},
 	getWebSocketUrl() {
 		return getMazeWebSocketUrl();
+	},
+	getWebSocketCandidatesJson() {
+		return JSON.stringify(getMazeWebSocketCandidates());
 	},
 	getStateJson() {
 		return JSON.stringify(mazeDiscordSnapshot());
