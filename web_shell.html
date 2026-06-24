@@ -376,34 +376,40 @@ function installMazeActivityNetworkRewrite() {
 	if (!shouldUseDiscordActivityFlow() || window.__mazeActivityNetworkRewriteInstalled) {
 		return;
 	}
+
 	window.__mazeActivityNetworkRewriteInstalled = true;
-	mazeDiscordDebugLog('discord', 'Activity detectee : hooks reseau installes');
+	const NativeWebSocket = window.WebSocket;
+
+	if (typeof NativeWebSocket !== 'function') {
+		return
+	}
 
 	const MazeWebSocket = function (url, protocols) {
-	let nextUrl = url;
+		let nextUrl = url;
 
-	if (shouldUseDiscordActivityFlow()) {
-		try {
-			const parsed = new URL(url, window.location.href);
+		if (shouldUseDiscordActivityFlow()) {
+			try {
+				const parsed = new URL(url, window.location.href);
 
-			if (
-				parsed.origin === window.location.origin
-				&& parsed.pathname === '/ws'
-			) {
-				parsed.pathname = '/.proxy/ws';
-				nextUrl = parsed.toString();
-				mazeDiscordDebugLog('net', 'WebSocket force vers ' + mazeDebugUrlPath(nextUrl));
+				if (parsed.origin === window.location.origin && parsed.pathname === '/ws') {
+					parsed.pathname = '/.proxy/ws';
+					nextUrl = parsed.toString();
+					mazeDiscordDebugLog('net', 'WebSocket force vers ' + mazeDebugUrlPath(nextUrl));
+				}
+			} catch {
+				nextUrl = url;
 			}
-		} catch {
-			nextUrl = url;
 		}
-	}
 
-	if (protocols === undefined) {
-		return new NativeWebSocket(nextUrl);
-	}
-	return new NativeWebSocket(nextUrl, protocols);
-};
+		if (protocols === undefined) {
+			return new NativeWebSocket(nextUrl);
+		}
+		return new NativeWebSocket(nextUrl, protocols);
+	};
+
+	Object.setPrototypeOf(MazeWebSocket, NativeWebSocket);
+	MazeWebSocket.prototype = NativeWebSocket.prototype;
+	window.WebSocket = MazeWebSocket;
 
 	const nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
 	if (nativeFetch) {
