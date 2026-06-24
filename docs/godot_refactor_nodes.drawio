@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-06-24T00:00:00.000Z" agent="Codex" version="26.0.0" type="device">
+  <diagram id="etat-actuel" name="01 Etat actuel">
+    <mxGraphModel dx="1600" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title-current" value="A Maze Inc - Lecture du monolithe Godot actuel" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=28;fontStyle=1;fontColor=#102033;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1520" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle-current" value="Constat: scenes/main.tscn contient un seul Node2D MazeGame lie a scripts/main.gd, qui regroupe reseau, etat, UI, input, audio, Discord et rendu." style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=15;fontColor=#40566f;" vertex="1" parent="1">
+          <mxGeometry x="140" y="82" width="1320" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="monolith" value="&lt;b&gt;MazeGame&lt;/b&gt;&lt;br&gt;Node2D&lt;br&gt;&lt;font style=&quot;font-size: 14px&quot;&gt;scripts/main.gd&lt;br&gt;2912 lignes&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#101c2d;strokeColor=#45d9ff;fontColor=#ffffff;fontSize=20;fontStyle=1;spacing=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="570" y="160" width="460" height="700" as="geometry"/>
+        </mxCell>
+        <mxCell id="mono-vars" value="&lt;b&gt;Etat global&lt;/b&gt;&lt;br&gt;lignes 15-114&lt;br&gt;socket, Discord, room, maze, players, UI refs, timers, particules, audio" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1f3654;strokeColor=#83e8ff;fontColor=#ffffff;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="610" y="230" width="380" height="86" as="geometry"/>
+        </mxCell>
+        <mxCell id="mono-ui" value="&lt;b&gt;Construction UI&lt;/b&gt;&lt;br&gt;_build_interface, layouts, styles&lt;br&gt;lignes 131-718" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263a50;strokeColor=#83e8ff;fontColor=#ffffff;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="610" y="330" width="380" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="mono-discord" value="&lt;b&gt;Discord + HTTP + avatars&lt;/b&gt;&lt;br&gt;session, OAuth, Activity, presence&lt;br&gt;lignes 773-1260" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263a50;strokeColor=#b58cff;fontColor=#ffffff;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="610" y="422" width="380" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="mono-net" value="&lt;b&gt;Loop, input, reseau&lt;/b&gt;&lt;br&gt;_process, _unhandled_input, WebSocket&lt;br&gt;lignes 1284-1446" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263a50;strokeColor=#ffd166;fontColor=#ffffff;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="610" y="514" width="380" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="mono-state" value="&lt;b&gt;Snapshots + gameplay view state&lt;/b&gt;&lt;br&gt;_handle_message, players, winner, scoreboard&lt;br&gt;lignes 1446-2143" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263a50;strokeColor=#79e36a;fontColor=#ffffff;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="610" y="606" width="380" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="mono-draw" value="&lt;b&gt;Rendu canvas&lt;/b&gt;&lt;br&gt;_draw, maze, joueurs, power-ups, FX&lt;br&gt;lignes 2250-2811" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263a50;strokeColor=#ff8fa3;fontColor=#ffffff;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="610" y="698" width="380" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="external-services" value="&lt;b&gt;Services externes&lt;/b&gt;&lt;br&gt;WebSocketPeer&lt;br&gt;HTTPRequest&lt;br&gt;JavaScriptBridge Discord&lt;br&gt;Clipboard navigateur" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f3ff;strokeColor=#6c8ebf;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="90" y="180" width="330" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="inputs-current" value="&lt;b&gt;Entrees joueur&lt;/b&gt;&lt;br&gt;Clavier, ZQSD, WASD&lt;br&gt;Manette avec deadzone&lt;br&gt;Boutons tactiles&lt;br&gt;Focus UI manette" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7dd;strokeColor=#d6b656;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="90" y="400" width="330" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="settings-current" value="&lt;b&gt;Persistance locale&lt;/b&gt;&lt;br&gt;user://settings.cfg&lt;br&gt;option secousse ecran" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f5e5;strokeColor=#82b366;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="90" y="620" width="330" height="118" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-current" value="&lt;b&gt;UI runtime&lt;/b&gt;&lt;br&gt;Lobby, login Discord&lt;br&gt;HUD course, countdown&lt;br&gt;Scoreboard, podium&lt;br&gt;Debug overlay, tooltip" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6dfff;strokeColor=#9673a6;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="180" width="330" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="render-current" value="&lt;b&gt;Sortie visuelle&lt;/b&gt;&lt;br&gt;Background&lt;br&gt;Labyrinthe + sortie&lt;br&gt;Power-ups&lt;br&gt;Joueurs + avatars&lt;br&gt;Particules et overlays" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6e6;strokeColor=#b85450;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="400" width="330" height="166" as="geometry"/>
+        </mxCell>
+        <mxCell id="state-current" value="&lt;b&gt;Etat de course&lt;/b&gt;&lt;br&gt;room_code, host_id&lt;br&gt;maze, players, podium&lt;br&gt;race_phase, timers&lt;br&gt;effects snapshots" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f5e5;strokeColor=#82b366;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="630" width="330" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="risk-current" value="&lt;b&gt;Risque de refacto&lt;/b&gt;&lt;br&gt;Le couplage vient surtout des variables globales partagees entre les handlers reseau, les controles UI et _draw(). La premiere extraction doit stabiliser un GameState signale avant de deplacer les vues." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="330" y="920" width="940" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-current-services" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" parent="1" source="external-services" target="monolith">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-current-inputs" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#d6b656;strokeWidth=2;" edge="1" parent="1" source="inputs-current" target="monolith">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-current-settings" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="settings-current" target="monolith">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-current-ui" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" parent="1" source="monolith" target="ui-current">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-current-render" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b85450;strokeWidth=2;" edge="1" parent="1" source="monolith" target="render-current">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-current-state" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="monolith" target="state-current">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="scene-cible" name="02 Scene cible">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title-target" value="Architecture cible - Decoupage en nodes Godot" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=28;fontStyle=1;fontColor=#102033;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1720" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend-target" value="Principe: MazeGame reste le coordinateur mince. Les nodes enfants possedent leur etat local, exposent des signals et ne lisent pas directement les variables internes des autres nodes." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f7fa;strokeColor=#b9c6d3;fontColor=#40566f;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="300" y="92" width="1200" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="root-target" value="&lt;b&gt;MazeGame&lt;/b&gt; (Node2D)&lt;br&gt;main.gd&lt;br&gt;boot, wiring signals, orchestration minimale" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#101c2d;strokeColor=#45d9ff;fontColor=#ffffff;fontSize=17;fontStyle=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="730" y="185" width="340" height="92" as="geometry"/>
+        </mxCell>
+        <mxCell id="services-container" value="Services (Node)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#e8f3ff;strokeColor=#6c8ebf;fontColor=#102033;fontSize=17;fontStyle=1;startSize=34;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="350" width="390" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="game-state" value="&lt;b&gt;GameState&lt;/b&gt;&lt;br&gt;game_state.gd&lt;br&gt;room, host, local player&lt;br&gt;maze, players, powerUps&lt;br&gt;phase, podium, round&lt;br&gt;&lt;i&gt;signals: snapshot_changed, phase_changed, power_event&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="services-container">
+          <mxGeometry x="25" y="55" width="340" height="118" as="geometry"/>
+        </mxCell>
+        <mxCell id="network-client" value="&lt;b&gt;NetworkClient&lt;/b&gt;&lt;br&gt;network_client.gd&lt;br&gt;WebSocketPeer lifecycle&lt;br&gt;connect_and_send, send_json&lt;br&gt;JSON parsing, reconnect status&lt;br&gt;&lt;i&gt;signal: message_received&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="services-container">
+          <mxGeometry x="25" y="190" width="340" height="112" as="geometry"/>
+        </mxCell>
+        <mxCell id="discord-bridge" value="&lt;b&gt;DiscordBridge&lt;/b&gt;&lt;br&gt;discord_bridge.gd&lt;br&gt;OAuth/session check&lt;br&gt;Activity SDK state&lt;br&gt;presence payloads&lt;br&gt;avatar loading cache" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="services-container">
+          <mxGeometry x="25" y="318" width="340" height="96" as="geometry"/>
+        </mxCell>
+        <mxCell id="settings-store" value="&lt;b&gt;SettingsStore&lt;/b&gt; - settings_store.gd&lt;br&gt;charge/sauve options locales" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="services-container">
+          <mxGeometry x="25" y="430" width="340" height="54" as="geometry"/>
+        </mxCell>
+        <mxCell id="input-container" value="Input (Node)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#fff7dd;strokeColor=#d6b656;fontColor=#102033;fontSize=17;fontStyle=1;startSize=34;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="500" y="350" width="330" height="360" as="geometry"/>
+        </mxCell>
+        <mxCell id="input-router" value="&lt;b&gt;InputRouter&lt;/b&gt;&lt;br&gt;input_router.gd&lt;br&gt;keyboard, WASD/ZQSD&lt;br&gt;gamepad deadzone&lt;br&gt;repeat timer&lt;br&gt;can_move gate demande au GameState&lt;br&gt;&lt;i&gt;signal: move_requested(direction)&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="input-container">
+          <mxGeometry x="25" y="60" width="280" height="138" as="geometry"/>
+        </mxCell>
+        <mxCell id="focus-controller" value="&lt;b&gt;FocusController&lt;/b&gt;&lt;br&gt;focus_controller.gd&lt;br&gt;navigation manette dans les panels" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="input-container">
+          <mxGeometry x="25" y="220" width="280" height="76" as="geometry"/>
+        </mxCell>
+        <mxCell id="world-container" value="World (Node2D)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#ffe6e6;strokeColor=#b85450;fontColor=#102033;fontSize=17;fontStyle=1;startSize=34;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="880" y="350" width="390" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="maze-renderer" value="&lt;b&gt;MazeRenderer&lt;/b&gt;&lt;br&gt;maze_renderer.gd&lt;br&gt;background, backing, walls&lt;br&gt;goal, direction hint&lt;br&gt;calcule origin + cell_size" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="world-container">
+          <mxGeometry x="25" y="55" width="340" height="98" as="geometry"/>
+        </mxCell>
+        <mxCell id="player-renderer" value="&lt;b&gt;PlayerRenderer&lt;/b&gt;&lt;br&gt;player_renderer.gd&lt;br&gt;joueurs, avatars, hover tooltip data&lt;br&gt;interpolation visual_positions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="world-container">
+          <mxGeometry x="25" y="170" width="340" height="86" as="geometry"/>
+        </mxCell>
+        <mxCell id="powerup-renderer" value="&lt;b&gt;PowerUpRenderer&lt;/b&gt;&lt;br&gt;powerup_renderer.gd&lt;br&gt;power-ups actifs, cooldown arc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="world-container">
+          <mxGeometry x="25" y="273" width="340" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="effects-layer" value="&lt;b&gt;EffectsLayer&lt;/b&gt;&lt;br&gt;effects_layer.gd&lt;br&gt;trails, ripples, pickup particles&lt;br&gt;celebration, screen FX, countdown FX" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#ff8fa3;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="world-container">
+          <mxGeometry x="25" y="358" width="340" height="86" as="geometry"/>
+        </mxCell>
+        <mxCell id="audio-director" value="&lt;b&gt;AudioDirector&lt;/b&gt;&lt;br&gt;audio_director.gd&lt;br&gt;tones, music loop, event sounds" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="world-container">
+          <mxGeometry x="25" y="460" width="340" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-container" value="UI (CanvasLayer)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#e6dfff;strokeColor=#9673a6;fontColor=#102033;fontSize=17;fontStyle=1;startSize=34;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="350" width="420" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="lobby-panel" value="&lt;b&gt;LobbyPanel&lt;/b&gt;&lt;br&gt;lobby_panel.tscn + .gd&lt;br&gt;name, room code, create/join, Discord status, maze size" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="ui-container">
+          <mxGeometry x="25" y="55" width="370" height="86" as="geometry"/>
+        </mxCell>
+        <mxCell id="race-hud" value="&lt;b&gt;RaceHud&lt;/b&gt;&lt;br&gt;race_hud.tscn + .gd&lt;br&gt;rank, effects, countdown, toast, waiting label" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="ui-container">
+          <mxGeometry x="25" y="158" width="370" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="scoreboard-panel" value="&lt;b&gt;ScoreboardPanel&lt;/b&gt;&lt;br&gt;scoreboard_panel.tscn + .gd&lt;br&gt;classement manche, podium, restart host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="ui-container">
+          <mxGeometry x="25" y="253" width="370" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="touch-controls" value="&lt;b&gt;TouchControls&lt;/b&gt;&lt;br&gt;touch_controls.tscn + .gd&lt;br&gt;D-pad mobile, pressed/released signal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="ui-container">
+          <mxGeometry x="25" y="348" width="370" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="debug-overlay" value="&lt;b&gt;DebugOverlay&lt;/b&gt;&lt;br&gt;debug_overlay.tscn + .gd&lt;br&gt;logs menu + sync visibilite JS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="ui-container">
+          <mxGeometry x="25" y="435" width="370" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="tree-note" value="Arbre de scene propose:&lt;br&gt;MazeGame / Services, Input, World, UI&lt;br&gt;Chaque sous-scene peut etre testee et remplacee sans toucher au rendu complet." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="520" y="930" width="760" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-root-services" value="child" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" parent="1" source="root-target" target="services-container">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-root-input" value="child" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#d6b656;strokeWidth=2;" edge="1" parent="1" source="root-target" target="input-container">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-root-world" value="child" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b85450;strokeWidth=2;" edge="1" parent="1" source="root-target" target="world-container">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-root-ui" value="child" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" parent="1" source="root-target" target="ui-container">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-net-state" value="message_received" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="network-client" target="game-state">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-input-net" value="move_requested" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;strokeColor=#d6b656;strokeWidth=2;" edge="1" parent="1" source="input-router" target="network-client">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-state-world" value="snapshot signals" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="game-state" target="maze-renderer">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-state-ui" value="snapshot signals" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="game-state" target="race-hud">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="flux-refacto" name="03 Flux et migration">
+    <mxGraphModel dx="1700" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title-flow" value="Flux runtime et sequence de refacto" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=28;fontStyle=1;fontColor=#102033;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1620" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-lobby" value="&lt;b&gt;LobbyPanel&lt;/b&gt;&lt;br&gt;create / join / start / restart&lt;br&gt;maze size" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6dfff;strokeColor=#9673a6;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="80" y="145" width="230" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-input" value="&lt;b&gt;InputRouter&lt;/b&gt;&lt;br&gt;keyboard / gamepad / touch&lt;br&gt;move_requested" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7dd;strokeColor=#d6b656;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="80" y="285" width="230" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-coordinator" value="&lt;b&gt;MazeGame coordinator&lt;/b&gt;&lt;br&gt;valide les commandes simples&lt;br&gt;relie UI, input et services" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#101c2d;strokeColor=#45d9ff;fontColor=#ffffff;fontSize=15;fontStyle=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="390" y="215" width="250" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-network" value="&lt;b&gt;NetworkClient&lt;/b&gt;&lt;br&gt;send_json&lt;br&gt;poll WebSocket&lt;br&gt;message_received" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f3ff;strokeColor=#6c8ebf;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="720" y="215" width="230" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-server" value="&lt;b&gt;Serveur autoritaire&lt;/b&gt;&lt;br&gt;Node.js WebSocket&lt;br&gt;rooms, maze, ranking, power-ups" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f7fa;strokeColor=#7a869a;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="215" width="260" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-state" value="&lt;b&gt;GameState&lt;/b&gt;&lt;br&gt;apply_snapshot(message)&lt;br&gt;met a jour donnees immuables-ish&lt;br&gt;emet des signals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f5e5;strokeColor=#82b366;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="720" y="430" width="270" height="116" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-render" value="&lt;b&gt;World renderers&lt;/b&gt;&lt;br&gt;MazeRenderer&lt;br&gt;PowerUpRenderer&lt;br&gt;PlayerRenderer&lt;br&gt;EffectsLayer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6e6;strokeColor=#b85450;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="350" y="630" width="250" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-ui" value="&lt;b&gt;UI panels&lt;/b&gt;&lt;br&gt;LobbyPanel&lt;br&gt;RaceHud&lt;br&gt;ScoreboardPanel&lt;br&gt;DebugOverlay" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6dfff;strokeColor=#9673a6;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="700" y="630" width="250" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="flow-discord" value="&lt;b&gt;DiscordBridge&lt;/b&gt;&lt;br&gt;observe GameState&lt;br&gt;update presence&lt;br&gt;fournit avatars" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#efe6ff;strokeColor=#9673a6;fontColor=#102033;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="630" width="250" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase-title" value="Ordre de migration conseille" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#102033;" vertex="1" parent="1">
+          <mxGeometry x="80" y="850" width="420" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase-1" value="&lt;b&gt;1. GameState&lt;/b&gt;&lt;br&gt;Extraire les variables de course et _apply_race_metadata. Garder main.gd comme facade temporaire." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f5e5;strokeColor=#82b366;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="80" y="915" width="285" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase-2" value="&lt;b&gt;2. NetworkClient&lt;/b&gt;&lt;br&gt;Deplacer WebSocket, pending_message, _connect_and_send, _send_json, _update_network." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f3ff;strokeColor=#6c8ebf;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="395" y="915" width="285" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase-3" value="&lt;b&gt;3. UI scenes&lt;/b&gt;&lt;br&gt;Transformer LobbyPanel, RaceHud, ScoreboardPanel, TouchControls en .tscn + scripts." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6dfff;strokeColor=#9673a6;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="710" y="915" width="285" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase-4" value="&lt;b&gt;4. World renderers&lt;/b&gt;&lt;br&gt;Separer _draw en MazeRenderer, PlayerRenderer, PowerUpRenderer et EffectsLayer." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6e6;strokeColor=#b85450;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1025" y="915" width="285" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase-5" value="&lt;b&gt;5. Services restants&lt;/b&gt;&lt;br&gt;Extraire DiscordBridge, AudioDirector, SettingsStore puis reduire main.gd au wiring." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#102033;fontSize=14;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="915" width="285" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase-note" value="Definition de fini: chaque extraction remplace des lectures directes de variables globales par des APIs claires ou des signals, avec le meme comportement reseau et visuel qu'avant." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f7fa;strokeColor=#b9c6d3;fontColor=#40566f;fontSize=15;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="270" y="1065" width="1160" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-lobby-coord" value="commands" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" parent="1" source="flow-lobby" target="flow-coordinator">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-input-coord" value="move_requested" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#d6b656;strokeWidth=2;" edge="1" parent="1" source="flow-input" target="flow-coordinator">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-coord-net" value="send command" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" parent="1" source="flow-coordinator" target="flow-network">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-net-server" value="WS JSON" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" parent="1" source="flow-network" target="flow-server">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-server-net" value="snapshot / event" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" parent="1" source="flow-server" target="flow-network">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1160" y="380"/>
+              <mxPoint x="835" y="380"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-net-state-flow" value="message_received" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="flow-network" target="flow-state">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-state-render" value="snapshot_changed" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="flow-state" target="flow-render">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-state-ui-flow" value="phase/rank/score" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="flow-state" target="flow-ui">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-state-discord" value="presence data" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="flow-state" target="flow-discord">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-discord-render" value="avatar textures" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" parent="1" source="flow-discord" target="flow-render">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-phase-1-2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7a869a;strokeWidth=2;" edge="1" parent="1" source="phase-1" target="phase-2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-phase-2-3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7a869a;strokeWidth=2;" edge="1" parent="1" source="phase-2" target="phase-3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-phase-3-4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7a869a;strokeWidth=2;" edge="1" parent="1" source="phase-3" target="phase-4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-phase-4-5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7a869a;strokeWidth=2;" edge="1" parent="1" source="phase-4" target="phase-5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

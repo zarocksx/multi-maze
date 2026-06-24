@@ -6,28 +6,16 @@ const WALL_RIGHT := 2
 const WALL_BOTTOM := 4
 const WALL_LEFT := 8
 const CELEBRATION_COLORS := ["#45d9ff", "#ff5c8a", "#ffd166", "#79e36a", "#b58cff"]
-const SETTINGS_PATH := "user://settings.cfg"
 const GAMEPAD_DEADZONE := 0.42
 const MAX_PLAYERS := 8
-const MENU_DEBUG_MAX_LINES := 8
-const MENU_DEBUG_MAX_CHARS := 112
 
-var socket := WebSocketPeer.new()
-var auth_request: HTTPRequest
-var auth_request_action := ""
-var discord_user: Dictionary = {}
-var discord_session_token := ""
-var discord_activity_mode := false
-var discord_activity_ready := false
-var discord_activity_scope_ready := false
-var discord_login_pending := false
-var discord_bridge_error := ""
-var discord_bridge_poll_timer := 0.0
-var discord_presence_start_unix := 0
-var discord_presence_dirty := true
-var discord_presence_refresh_timer := 0.0
-var discord_presence_last_signature := ""
-var avatar_textures: Dictionary = {}
+@onready var settings_store := $SettingsStore
+@onready var audio_director := $AudioDirector
+@onready var network_client := $NetworkClient
+@onready var avatar_loader := $AvatarLoader
+@onready var debug_overlay := $DebugOverlay
+@onready var discord_bridge := $DiscordBridge
+
 var player_id := ""
 var host_id := ""
 var room_code := ""
@@ -45,8 +33,6 @@ var current_round := 1
 var last_event_id := ""
 var effects_snapshot_local_ms := 0
 var power_ups_snapshot_local_ms := 0
-var pending_message: Dictionary = {}
-var last_socket_state := WebSocketPeer.STATE_CLOSED
 
 var panel: PanelContainer
 var server_input: LineEdit
@@ -74,10 +60,6 @@ var podium_rows: VBoxContainer
 var score_subtitle: Label
 var score_restart_button: Button
 var wall_shake_toggle: CheckButton
-var menu_debug_panel: PanelContainer
-var menu_debug_label: Label
-var menu_debug_lines: Array = []
-var menu_debug_last_visible := false
 var player_tooltip: Label
 var held_direction := ""
 var move_repeat_timer := 0.0
@@ -98,34 +80,41 @@ var power_down_flash_color := Color.TRANSPARENT
 var active_power_downs: Dictionary = {}
 var direction_hint_until_ms := 0
 var last_countdown_value := ""
-var music_timer := 0.0
-var music_note_index := 0
-var audio_players: Array = []
-var audio_player_index := 0
 var scoreboard_animated_round := 0
 var wall_shake_enabled := true
 var touchscreen_available := false
 var touch_controls: PanelContainer
 var touch_direction := ""
 var gamepad_focus_locked := false
-var discord_debug_log_last_id := 0
-var discord_debug_empty_logged := false
-var discord_debug_last_error := ""
-var discord_debug_last_user_signature := ""
 
 
 func _ready() -> void:
 	random.randomize()
+	_setup_services()
 	_load_settings()
-	_setup_audio()
 	touchscreen_available = _detect_touchscreen()
 	_build_interface()
+	discord_bridge.configure_ui(discord_button, discord_status_label, name_input, status_label)
 	server_input.text = _default_server_url()
 	_debug_log("Menu principal prêt", "ok")
 	_debug_log("WS par défaut : %s" % _debug_safe_url(server_input.text), "net")
 	_check_discord_session()
 	get_viewport().size_changed.connect(_on_viewport_resized)
 	queue_redraw()
+
+
+func _setup_services() -> void:
+	audio_director.setup()
+	discord_bridge.setup()
+	discord_bridge.debug_logged.connect(_on_discord_debug_logged)
+	network_client.connecting.connect(_on_network_connecting)
+	network_client.connection_failed.connect(_on_network_connection_failed)
+	network_client.opened.connect(_on_network_opened)
+	network_client.closed.connect(_on_network_closed)
+	network_client.sent.connect(_on_network_sent)
+	network_client.packet_warning.connect(_on_network_packet_warning)
+	network_client.message_received.connect(_on_network_message_received)
+	avatar_loader.avatar_changed.connect(_on_avatar_changed)
 
 
 func _build_interface() -> void:
@@ -315,11 +304,6 @@ func _build_interface() -> void:
 	discord_status_label.text = "Vérification du compte…"
 	discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
 	discord_row.add_child(discord_status_label)
-
-	auth_request = HTTPRequest.new()
-	auth_request.timeout = 8.0
-	auth_request.request_completed.connect(_on_auth_request_completed)
-	add_child(auth_request)
 
 	var name_row := HBoxContainer.new()
 	name_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -512,123 +496,37 @@ func _layout_lobby_panel() -> void:
 
 
 func _build_menu_debug_panel(root: Control) -> void:
-	menu_debug_panel = PanelContainer.new()
-	menu_debug_panel.name = "MenuDebugLogs"
-	menu_debug_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	menu_debug_panel.z_index = 18
-	menu_debug_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	var debug_style := StyleBoxFlat.new()
-	debug_style.bg_color = Color(0.025, 0.055, 0.09, 0.74)
-	debug_style.border_color = Color(0.32, 0.79, 0.95, 0.24)
-	debug_style.set_border_width_all(1)
-	debug_style.set_corner_radius_all(9)
-	debug_style.content_margin_left = 10
-	debug_style.content_margin_right = 10
-	debug_style.content_margin_top = 8
-	debug_style.content_margin_bottom = 8
-	menu_debug_panel.add_theme_stylebox_override("panel", debug_style)
-	root.add_child(menu_debug_panel)
-
-	menu_debug_label = Label.new()
-	menu_debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	menu_debug_label.add_theme_font_size_override("font_size", 12)
-	menu_debug_label.add_theme_color_override("font_color", Color("b9d5ec"))
-	menu_debug_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	menu_debug_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	menu_debug_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	menu_debug_panel.add_child(menu_debug_label)
-	_layout_menu_debug_panel()
-	_refresh_menu_debug_log()
+	debug_overlay.build(root)
 
 
 func _layout_menu_debug_panel() -> void:
-	if not is_instance_valid(menu_debug_panel):
-		return
-	var viewport_size := get_viewport_rect().size
-	var width := minf(460.0, maxf(292.0, viewport_size.x - 32.0))
-	var height := 142.0 if viewport_size.y >= 480.0 else 108.0
-	menu_debug_panel.offset_left = 16
-	menu_debug_panel.offset_right = 16 + width
-	menu_debug_panel.offset_bottom = -64
-	menu_debug_panel.offset_top = menu_debug_panel.offset_bottom - height
+	debug_overlay.layout(get_viewport_rect().size)
 
 
 func _debug_log(message: String, level: String = "info") -> void:
-	var now := Time.get_time_dict_from_system()
-	var stamp := "%02d:%02d:%02d" % [
-		int(now.get("hour", 0)),
-		int(now.get("minute", 0)),
-		int(now.get("second", 0)),
-	]
-	var tag := _debug_level_tag(level)
-	menu_debug_lines.append("%s %-4s %s" % [stamp, tag, _debug_shorten(message)])
-	while menu_debug_lines.size() > MENU_DEBUG_MAX_LINES:
-		menu_debug_lines.pop_front()
-	_refresh_menu_debug_log()
+	debug_overlay.log(message, level)
 
 
-func _debug_level_tag(level: String) -> String:
-	match level.to_lower():
-		"ok":
-			return "OK"
-		"net":
-			return "NET"
-		"discord":
-			return "DISC"
-		"warn":
-			return "WARN"
-		"error":
-			return "ERR"
-		_:
-			return "INFO"
+func _on_discord_debug_logged(message: String, level: String) -> void:
+	_debug_log(message, level)
 
 
 func _debug_shorten(message: String) -> String:
-	var compact := message.replace("\r", " ").replace("\n", " ").strip_edges()
-	while compact.contains("  "):
-		compact = compact.replace("  ", " ")
-	if compact.length() > MENU_DEBUG_MAX_CHARS:
-		return compact.left(MENU_DEBUG_MAX_CHARS - 1) + "…"
-	return compact
+	return debug_overlay.shorten(message)
 
 
 func _debug_safe_url(url: String) -> String:
-	var safe := url
-	var session_index := safe.find("session=")
-	if session_index >= 0:
-		var session_end := safe.find("&", session_index)
-		if session_end >= 0:
-			safe = safe.left(session_index) + "session=…" + safe.substr(session_end)
-		else:
-			safe = safe.left(session_index) + "session=…"
-	return _debug_shorten(safe)
+	return debug_overlay.safe_url(url)
 
 
 func _refresh_menu_debug_log() -> void:
-	if not is_instance_valid(menu_debug_label):
-		return
-	var text := ""
-	for line in menu_debug_lines:
-		if not text.is_empty():
-			text += "\n"
-		text += str(line)
-	menu_debug_label.text = text if not text.is_empty() else "diag: en attente des événements…"
+	debug_overlay.refresh()
 	_update_menu_debug_visibility()
 
 
 func _update_menu_debug_visibility() -> void:
-	if not is_instance_valid(menu_debug_panel):
-		return
 	var next_visible := is_instance_valid(panel) and panel.visible and room_code.is_empty()
-	menu_debug_panel.visible = next_visible
-	if next_visible == menu_debug_last_visible:
-		return
-	menu_debug_last_visible = next_visible
-	if OS.has_feature("web"):
-		JavaScriptBridge.eval(
-			"window.mazeDiscord && window.mazeDiscord.setDebugOverlayVisible"
-			+ " && window.mazeDiscord.setDebugOverlayVisible(%s)" % ("true" if next_visible else "false")
-		)
+	debug_overlay.set_context_visible(next_visible)
 
 
 func _apply_button_style(
@@ -728,14 +626,7 @@ func _detect_touchscreen() -> bool:
 
 
 func _setup_audio() -> void:
-	for _index in range(8):
-		var player := AudioStreamPlayer.new()
-		var stream := AudioStreamGenerator.new()
-		stream.mix_rate = 11025.0
-		stream.buffer_length = 0.45
-		player.stream = stream
-		add_child(player)
-		audio_players.append(player)
+	audio_director.setup()
 
 
 func _play_tone(
@@ -745,297 +636,45 @@ func _play_tone(
 	waveform: String = "sine",
 	slide: float = 0.0
 ) -> void:
-	if audio_players.is_empty():
-		return
-	var player: AudioStreamPlayer = audio_players[audio_player_index % audio_players.size()]
-	audio_player_index += 1
-	player.stop()
-	player.play()
-	var playback = player.get_stream_playback()
-	if not playback:
-		return
-	var sample_rate := 11025.0
-	var frame_count := int(duration * sample_rate)
-	for frame in range(frame_count):
-		var progress := float(frame) / maxf(1.0, frame_count - 1.0)
-		var current_frequency := frequency + slide * progress
-		var phase := TAU * current_frequency * float(frame) / sample_rate
-		var sample := sin(phase)
-		if waveform == "square":
-			sample = 1.0 if sample >= 0.0 else -1.0
-		elif waveform == "noise":
-			sample = random.randf_range(-1.0, 1.0)
-		var envelope := minf(1.0, progress * 14.0) * minf(1.0, (1.0 - progress) * 8.0)
-		var value := sample * volume * envelope
-		playback.push_frame(Vector2(value, value))
+	audio_director.play_tone(frequency, duration, volume, waveform, slide)
 
 
 func _default_server_url() -> String:
-	if OS.has_feature("web"):
-		var javascript := (
-			"(function(){"
-			+ "if (window.mazeDiscord && window.mazeDiscord.getWebSocketUrl) {"
-			+ " return window.mazeDiscord.getWebSocketUrl();"
-			+ "}"
-			+ "const explicit = window.mazeDiscord && window.mazeDiscord.getServerBaseUrl"
-			+ " ? window.mazeDiscord.getServerBaseUrl() : window.location.origin;"
-			+ "const url = new URL(explicit);"
-			+ "url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';"
-			+ "url.pathname = '/ws';"
-			+ "url.search = '';"
-			+ "url.hash = '';"
-			+ "return url.toString();"
-			+ "})()"
-		)
-		var value = JavaScriptBridge.eval(javascript)
-		if value is String:
-			return value
-	return LOCAL_SERVER_URL
+	return discord_bridge.default_server_url(LOCAL_SERVER_URL)
 
 
 func _http_url(endpoint: String) -> String:
-	if OS.has_feature("web"):
-		var origin = JavaScriptBridge.eval(
-			"window.mazeDiscord && window.mazeDiscord.getServerBaseUrl"
-			+ " ? window.mazeDiscord.getServerBaseUrl() : window.location.origin"
-		)
-		if origin is String:
-			return str(origin) + endpoint
-	var base := server_input.text.strip_edges()
-	if base.is_empty():
-		base = LOCAL_SERVER_URL
-	if base.begins_with("wss://"):
-		base = "https://" + base.substr(6)
-	elif base.begins_with("ws://"):
-		base = "http://" + base.substr(5)
-	if base.ends_with("/ws"):
-		base = base.left(base.length() - 3)
-	while base.ends_with("/"):
-		base = base.left(base.length() - 1)
-	return base + endpoint
-
-
-func _discord_auth_headers() -> PackedStringArray:
-	var headers := PackedStringArray()
-	if not discord_session_token.is_empty():
-		headers.append("Authorization: Bearer %s" % discord_session_token)
-	return headers
-
-
-func _discord_bridge_state() -> Dictionary:
-	if not OS.has_feature("web"):
-		return {}
-	var raw = JavaScriptBridge.eval(
-		"window.mazeDiscord && window.mazeDiscord.getStateJson ? window.mazeDiscord.getStateJson() : ''"
-	)
-	if raw is String and not raw.is_empty():
-		var raw_text := str(raw).strip_edges()
-		if not raw_text.begins_with("{"):
-			return {}
-		var json := JSON.new()
-		if json.parse(raw_text) != OK:
-			return {}
-		var parsed = json.data
-		if parsed is Dictionary:
-			return parsed
-	return {}
-
-
-func _sync_discord_debug_logs(raw_logs) -> void:
-	if not raw_logs is Array:
-		return
-	for entry in raw_logs:
-		if not entry is Dictionary:
-			continue
-		var entry_id := int(entry.get("id", 0))
-		if entry_id > 0 and entry_id <= discord_debug_log_last_id:
-			continue
-		discord_debug_log_last_id = maxi(discord_debug_log_last_id, entry_id)
-		var message := str(entry.get("message", ""))
-		if message.is_empty():
-			continue
-		_debug_log("JS " + message, str(entry.get("level", "info")))
+	var local_server_url := server_input.text.strip_edges() if server_input else LOCAL_SERVER_URL
+	return discord_bridge.http_url(endpoint, local_server_url)
 
 
 func _should_use_discord_activity_flow() -> bool:
-	if not OS.has_feature("web"):
-		return false
-	if discord_activity_mode:
-		return true
-	var direct_host_check = JavaScriptBridge.eval(
-		"(function(){"
-		+ "const params=new URLSearchParams(window.location.search);"
-		+ "return window.location.hostname.endsWith('.discordsays.com')"
-		+ "|| params.has('instance_id')"
-		+ "|| params.has('launch_id')"
-		+ "|| params.has('frame_id')"
-		+ "|| params.has('guild_id')"
-		+ "|| params.has('channel_id');"
-		+ "})()"
-	)
-	if bool(direct_host_check):
-		return true
-	var raw = JavaScriptBridge.eval(
-		"window.mazeDiscord && window.mazeDiscord.shouldUseActivityFlow ? window.mazeDiscord.shouldUseActivityFlow() : false"
-	)
-	return bool(raw)
-
-
-func _request_discord_session_check() -> void:
-	auth_request_action = "check"
-	var url := _http_url("/api/auth/me")
-	_debug_log("HTTP GET %s" % _debug_safe_url(url), "net")
-	var error := auth_request.request(url, _discord_auth_headers())
-	if error != OK:
-		_debug_log("HTTP auth impossible : %s" % error_string(error), "error")
-		_show_discord_unavailable()
-
-
-func _sync_discord_bridge_state(force_refresh: bool = false) -> void:
-	var state := _discord_bridge_state()
-	if state.is_empty():
-		if not discord_debug_empty_logged:
-			discord_debug_empty_logged = true
-			_debug_log("Bridge Discord JS indisponible pour l’instant", "warn")
-		return
-	discord_debug_empty_logged = false
-	_sync_discord_debug_logs(state.get("logs", []))
-	var was_activity_mode := discord_activity_mode
-	var was_activity_ready := discord_activity_ready
-	var was_activity_scope_ready := discord_activity_scope_ready
-	discord_activity_mode = bool(state.get("isActivity", false))
-	discord_activity_ready = bool(state.get("sdkReady", false))
-	discord_activity_scope_ready = bool(state.get("activityScopeReady", false))
-	discord_login_pending = bool(state.get("loginInFlight", false))
-	discord_bridge_error = str(state.get("error", ""))
-	if discord_activity_mode != was_activity_mode or discord_activity_ready != was_activity_ready:
-		_mark_discord_presence_dirty()
-	if discord_activity_mode != was_activity_mode:
-		_debug_log(
-			"Mode Discord Activity détecté" if discord_activity_mode else "Mode web classique détecté",
-			"discord"
-		)
-	if discord_activity_ready != was_activity_ready:
-		_debug_log("SDK Discord prêt" if discord_activity_ready else "SDK Discord en attente", "discord")
-	if discord_activity_scope_ready and not was_activity_scope_ready:
-		_debug_log("Rich Presence autorisée", "ok")
-	if not discord_bridge_error.is_empty() and discord_bridge_error != discord_debug_last_error:
-		_debug_log("Discord : %s" % discord_bridge_error, "error")
-	discord_debug_last_error = discord_bridge_error
-	var next_session_token := str(state.get("sessionToken", ""))
-	var session_changed := next_session_token != discord_session_token
-	discord_session_token = next_session_token
-	if discord_activity_mode:
-		var bridge_user = state.get("user", {})
-		if bridge_user is Dictionary and not bridge_user.is_empty():
-			discord_user = bridge_user
-			var user_signature := "%s:%s" % [
-				str(discord_user.get("id", "")),
-				str(discord_user.get("displayName", discord_user.get("username", ""))),
-			]
-			if user_signature != discord_debug_last_user_signature:
-				discord_debug_last_user_signature = user_signature
-				_debug_log(
-					"Profil Activity : %s" % str(discord_user.get("displayName", "Joueur Discord")),
-					"discord"
-				)
-		else:
-			discord_user = {}
-			discord_debug_last_user_signature = ""
-		_refresh_discord_controls(bool(state.get("enabled", false)))
-		if session_changed or force_refresh:
-			_mark_discord_presence_dirty()
-		return
+	return discord_bridge.should_use_activity_flow()
 
 
 func _update_discord_bridge(delta: float) -> void:
-	if not OS.has_feature("web"):
-		return
-	discord_bridge_poll_timer -= delta
-	if discord_bridge_poll_timer > 0.0:
-		return
-	discord_bridge_poll_timer = 0.5
-	_sync_discord_bridge_state()
-	if _should_use_discord_activity_flow() and not discord_activity_ready:
-		JavaScriptBridge.eval("window.mazeDiscord && window.mazeDiscord.init && window.mazeDiscord.init()")
+	discord_bridge.update_bridge(delta)
 
 
 func _mark_discord_presence_dirty() -> void:
-	discord_presence_dirty = true
-	discord_presence_refresh_timer = 0.0
+	discord_bridge.mark_presence_dirty()
 
 
 func _update_discord_presence(delta: float) -> void:
-	if not OS.has_feature("web") or not discord_activity_mode or not discord_activity_ready:
-		return
-	discord_presence_refresh_timer -= delta
-	if discord_presence_refresh_timer > 0.0:
-		return
-	if discord_presence_start_unix <= 0:
-		discord_presence_start_unix = int(Time.get_unix_time_from_system())
-	var was_dirty := discord_presence_dirty
-	var payload := _discord_presence_payload()
-	var signature := JSON.stringify(payload)
-	if was_dirty or signature != discord_presence_last_signature or discord_presence_refresh_timer <= 0.0:
-		discord_presence_last_signature = signature
-		_send_discord_presence(payload)
-	discord_presence_dirty = false
-	discord_presence_refresh_timer = 4.0 if was_dirty else 30.0
+	discord_bridge.update_presence(delta, _discord_game_context())
 
 
-func _discord_presence_payload() -> Dictionary:
-	var details := "Dans le lobby"
-	var state := "Prêt pour une nouvelle course"
-	var small_text := "Lobby"
-	var player_count := players.size()
-
-	if not room_code.is_empty():
-		state = "Manche %d • %d/%d joueur(s)" % [current_round, player_count, MAX_PLAYERS]
-		if race_complete:
-			details = "Course terminée"
-			small_text = "Classement"
-			var rank := _local_player_rank()
-			if rank > 0:
-				state = "%s sur %d • manche %d" % [
-					_discord_rank_text(rank),
-					maxi(1, player_count),
-					current_round,
-				]
-		elif race_phase == "waiting":
-			details = "Prépare une course"
-			small_text = "Salon en attente"
-		elif race_phase == "countdown":
-			details = "Départ imminent"
-			small_text = "Compte à rebours"
-		elif _local_player_finished():
-			details = "A trouvé la sortie"
-			state = "Attend les autres • manche %d" % current_round
-			small_text = "Arrivé"
-		else:
-			details = "Dans le labyrinthe"
-			small_text = "Course en cours"
-
-	var payload := {
-		"details": details,
-		"state": state,
-		"started_at": discord_presence_start_unix,
-		"large_text": "A Maze Inc.",
-		"small_text": small_text,
+func _discord_game_context() -> Dictionary:
+	return {
+		"room_code": room_code,
+		"player_count": players.size(),
+		"current_round": current_round,
+		"max_players": MAX_PLAYERS,
+		"race_complete": race_complete,
+		"race_phase": race_phase,
+		"local_rank": _local_player_rank(),
+		"local_finished": _local_player_finished(),
 	}
-	if not room_code.is_empty() and player_count > 0:
-		payload["party_size"] = player_count
-		payload["party_max"] = MAX_PLAYERS
-	return payload
-
-
-func _send_discord_presence(payload: Dictionary) -> void:
-	var payload_json := JSON.stringify(payload)
-	var script := (
-		"window.mazeDiscord"
-		+ "&& window.mazeDiscord.setActivityFromGodot"
-		+ "&& window.mazeDiscord.setActivityFromGodot(%s)"
-	) % payload_json
-	JavaScriptBridge.eval(script)
 
 
 func _local_player_rank() -> int:
@@ -1045,240 +684,34 @@ func _local_player_rank() -> int:
 	return int(player.get("rank", 0))
 
 
-func _discord_rank_text(rank: int) -> String:
-	if rank == 1:
-		return "1er"
-	return "%de" % rank
-
-
 func _check_discord_session() -> void:
-	if not OS.has_feature("web"):
-		discord_button.text = "Discord : version Web"
-		discord_button.disabled = true
-		discord_status_label.text = "Connexion disponible dans l’export Web"
-		_debug_log("Discord : export Web requis", "info")
-		return
-	JavaScriptBridge.eval("window.mazeDiscord && window.mazeDiscord.init && window.mazeDiscord.init()")
-	_sync_discord_bridge_state(true)
-	if _should_use_discord_activity_flow():
-		_debug_log("Flux Discord Activity actif", "discord")
-		return
-	_request_discord_session_check()
+	discord_bridge.check_session()
 
 
 func _on_discord_pressed() -> void:
-	if _should_use_discord_activity_flow():
-		discord_button.disabled = true
-		discord_status_label.text = "Autorisation Discord..."
-		discord_login_pending = true
-		_debug_log("Demande d’autorisation Rich Presence", "discord")
-		JavaScriptBridge.eval(
-			"window.mazeDiscord && window.mazeDiscord.beginLogin && window.mazeDiscord.beginLogin()"
-		)
-		return
-	if not discord_user.is_empty():
-		auth_request_action = "logout"
-		discord_button.disabled = true
-		var error := auth_request.request(
-			_http_url("/api/auth/logout"),
-			_discord_auth_headers(),
-			HTTPClient.METHOD_POST
-		)
-		if error != OK:
-			discord_button.disabled = false
-			discord_status_label.text = "Déconnexion impossible."
-		return
-	discord_button.disabled = true
-	discord_status_label.text = "Ouverture de Discord…"
-	_debug_log("Redirection OAuth Discord", "discord")
-	JavaScriptBridge.eval("window.location.assign('/auth/discord')")
-
-
-func _on_auth_request_completed(
-	result: int,
-	response_code: int,
-	_headers: PackedStringArray,
-	body: PackedByteArray
-) -> void:
-	_debug_log(
-		"HTTP auth result=%d code=%d bytes=%d" % [result, response_code, body.size()],
-		"net" if response_code == 200 else "warn"
-	)
-	var raw_body := body.get_string_from_utf8().strip_edges()
-	if not raw_body.begins_with("{"):
-		_debug_log("HTTP auth non JSON : %s" % _debug_shorten(raw_body.left(80)), "error")
-		_show_discord_unavailable()
-		return
-	var json := JSON.new()
-	if json.parse(raw_body) != OK:
-		_debug_log("HTTP auth JSON invalide : %s" % _debug_shorten(raw_body.left(80)), "error")
-		_show_discord_unavailable()
-		return
-	var payload = json.data
-	if response_code != 200 or not payload is Dictionary:
-		_debug_log("HTTP auth refusé : code %d" % response_code, "warn")
-		_show_discord_unavailable()
-		return
-	var enabled := bool(payload.get("enabled", false))
-	if bool(payload.get("authenticated", false)):
-		var user = payload.get("user", {})
-		discord_user = user if user is Dictionary else {}
-		discord_login_pending = false
-	else:
-		discord_user = {}
-		if auth_request_action == "logout":
-			discord_session_token = ""
-	_debug_log(
-		"HTTP auth : %s" % ("connecté" if bool(payload.get("authenticated", false)) else "non connecté"),
-		"ok" if bool(payload.get("authenticated", false)) else "info"
-	)
-	_refresh_discord_controls(enabled)
-	_mark_discord_presence_dirty()
-	if auth_request_action == "logout":
-		status_label.text = "Compte Discord déconnecté."
-	auth_request_action = ""
-
-
-func _refresh_discord_controls(enabled: bool) -> void:
-	if _should_use_discord_activity_flow():
-		if not discord_user.is_empty():
-			var activity_display_name := str(discord_user.get("displayName", "Joueur Discord"))
-			name_input.text = activity_display_name.left(16)
-			name_input.editable = false
-			name_input.tooltip_text = "Le profil Discord de l’Activity est utilisé automatiquement."
-			discord_status_label.add_theme_color_override("font_color", Color("79e36a"))
-			discord_status_label.text = "Activity : %s" % activity_display_name
-			if discord_login_pending:
-				discord_button.text = "Connexion Discord..."
-				discord_button.disabled = true
-			elif discord_activity_scope_ready:
-				discord_button.text = "Rich Presence active"
-				discord_button.disabled = true
-			elif discord_activity_ready:
-				discord_button.text = "Activer Rich Presence"
-				discord_button.disabled = false
-			else:
-				discord_button.text = "Discord Activity"
-				discord_button.disabled = true
-			return
-		name_input.editable = true
-		name_input.tooltip_text = ""
-		discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
-		if not enabled:
-			discord_button.text = "Discord non configuré"
-			discord_button.disabled = true
-			discord_status_label.text = "Configuration serveur requise"
-		elif not discord_activity_ready:
-			discord_button.text = "Discord Activity"
-			discord_button.disabled = true
-			discord_status_label.text = "Récupération du profil Discord..."
-		else:
-			discord_button.text = "Activer Rich Presence"
-			discord_button.disabled = false
-			discord_status_label.text = "Profil Activity en attente"
-		return
-
-	if not discord_user.is_empty():
-		var display_name := str(discord_user.get("displayName", "Joueur Discord"))
-		discord_button.text = "Se déconnecter"
-		discord_button.disabled = false
-		discord_status_label.text = "Connecté : %s" % display_name
-		discord_status_label.add_theme_color_override("font_color", Color("79e36a"))
-		name_input.text = display_name.left(16)
-		name_input.editable = false
-		name_input.tooltip_text = "Le pseudo Discord est utilisé pendant la connexion."
-		return
-	name_input.editable = true
-	name_input.tooltip_text = ""
-	discord_status_label.add_theme_color_override("font_color", Color("9aa9c2"))
-	if enabled:
-		discord_button.text = "Se connecter avec Discord"
-		discord_button.disabled = false
-		discord_status_label.text = "Utiliser votre photo de profil"
-	else:
-		discord_button.text = "Discord non configuré"
-		discord_button.disabled = true
-		discord_status_label.text = "Configuration serveur requise"
-
-
-func _show_discord_unavailable() -> void:
-	discord_user = {}
-	discord_login_pending = false
-	discord_button.text = "Discord indisponible"
-	discord_button.disabled = true
-	discord_status_label.text = "Le serveur d’authentification ne répond pas"
-	discord_status_label.add_theme_color_override("font_color", Color("ff8fa3"))
-	_debug_log("Discord indisponible côté menu", "error")
+	discord_bridge.handle_button_pressed()
 
 
 func _ensure_avatar_loaded(player: Dictionary) -> void:
 	var avatar_url := str(player.get("avatarUrl", ""))
-	if (
-		avatar_url.is_empty()
-		or not avatar_url.begins_with("/api/discord/avatar/")
-		or avatar_textures.has(avatar_url)
-	):
+	if avatar_url.is_empty():
 		return
-	avatar_textures[avatar_url] = null
-	var request := HTTPRequest.new()
-	request.timeout = 10.0
-	request.request_completed.connect(
-		_on_avatar_request_completed.bind(avatar_url, request)
-	)
-	add_child(request)
-	var error := request.request(_http_url(avatar_url))
-	if error != OK:
-		avatar_textures.erase(avatar_url)
-		request.queue_free()
+	avatar_loader.ensure_loaded(player, _http_url(avatar_url))
 
 
-func _on_avatar_request_completed(
-	_result: int,
-	response_code: int,
-	_headers: PackedStringArray,
-	body: PackedByteArray,
-	avatar_url: String,
-	request: HTTPRequest
-) -> void:
-	if response_code == 200:
-		var image := Image.new()
-		var error := image.load_png_from_buffer(body)
-		if error == OK:
-			image.resize(96, 96, Image.INTERPOLATE_LANCZOS)
-			image.convert(Image.FORMAT_RGBA8)
-			var center := Vector2(47.5, 47.5)
-			var radius := 47.5
-			for y in range(96):
-				for x in range(96):
-					var pixel := image.get_pixel(x, y)
-					var edge := radius - Vector2(x, y).distance_to(center)
-					pixel.a *= clampf(edge + 0.5, 0.0, 1.0)
-					image.set_pixel(x, y, pixel)
-			avatar_textures[avatar_url] = ImageTexture.create_from_image(image)
-			if race_complete:
-				_refresh_scoreboard()
-			queue_redraw()
-		else:
-			avatar_textures.erase(avatar_url)
-	else:
-		avatar_textures.erase(avatar_url)
-	request.queue_free()
+func _on_avatar_changed() -> void:
+	if race_complete:
+		_refresh_scoreboard()
+	queue_redraw()
 
 
 func _load_settings() -> void:
-	var config := ConfigFile.new()
-	if config.load(SETTINGS_PATH) == OK:
-		wall_shake_enabled = bool(
-			config.get_value("accessibility", "wall_shake_enabled", true)
-		)
+	wall_shake_enabled = settings_store.load_wall_shake_enabled(wall_shake_enabled)
 
 
 func _on_wall_shake_toggled(enabled: bool) -> void:
 	wall_shake_enabled = enabled
-	var config := ConfigFile.new()
-	config.load(SETTINGS_PATH)
-	config.set_value("accessibility", "wall_shake_enabled", wall_shake_enabled)
-	config.save(SETTINGS_PATH)
+	settings_store.save_wall_shake_enabled(wall_shake_enabled)
 
 
 func _process(delta: float) -> void:
@@ -1360,87 +793,69 @@ func _release_gamepad_focus() -> void:
 
 
 func _update_network() -> void:
-	var state := socket.get_ready_state()
-	if state != WebSocketPeer.STATE_CLOSED:
-		socket.poll()
-		state = socket.get_ready_state()
+	network_client.poll(not room_code.is_empty())
 
-	if state != last_socket_state:
-		last_socket_state = state
-		if state == WebSocketPeer.STATE_OPEN:
-			status_label.text = "Connecté au serveur…"
-			_debug_log("WS ouvert", "ok")
-			if not pending_message.is_empty():
-				_send_json(pending_message)
-				pending_message = {}
-		elif state == WebSocketPeer.STATE_CLOSED and not room_code.is_empty():
-			status_label.text = "Connexion perdue. Vérifiez le serveur."
-			_debug_log("WS fermé pendant un salon", "error")
-			room_code = ""
-			host_id = ""
-			race_complete = false
-			race_phase = "waiting"
-			race_start_deadline_ms = 0
-			power_ups.clear()
-			podium.clear()
-			players.clear()
-			maze.clear()
-			visual_positions.clear()
-			trail_marks.clear()
-			celebration_particles.clear()
-			_refresh_room_controls()
-			_refresh_scoreboard()
-			_mark_discord_presence_dirty()
-			queue_redraw()
-
-	while (
-		socket.get_ready_state() == WebSocketPeer.STATE_OPEN
-		and socket.get_available_packet_count() > 0
-	):
-		var packet := socket.get_packet().get_string_from_utf8()
-		var packet_text := packet.strip_edges()
-		if not packet_text.begins_with("{"):
-			_debug_log("WS paquet non JSON : %s" % _debug_shorten(packet_text.left(80)), "warn")
-			continue
-		var json := JSON.new()
-		if json.parse(packet_text) != OK:
-			_debug_log("WS JSON invalide : %s" % _debug_shorten(packet_text.left(80)), "warn")
-			continue
-		var message = json.data
-		if message is Dictionary:
-			_handle_message(message)
 
 
 func _connect_and_send(message: Dictionary) -> void:
-	if socket.get_ready_state() == WebSocketPeer.STATE_OPEN:
-		_send_json(message)
-		return
-	if socket.get_ready_state() == WebSocketPeer.STATE_CONNECTING:
-		pending_message = message
-		return
-
-	socket = WebSocketPeer.new()
-	last_socket_state = WebSocketPeer.STATE_CLOSED
-	pending_message = message
 	var url := _default_server_url() if _should_use_discord_activity_flow() else server_input.text.strip_edges()
 	if url.is_empty():
 		url = _default_server_url()
-	if OS.has_feature("web") and not discord_session_token.is_empty():
-		url += ("%ssession=%s" % ["&" if url.contains("?") else "?", discord_session_token])
-	var error := socket.connect_to_url(url)
-	if error != OK:
-		pending_message = {}
-		status_label.text = "Impossible de démarrer la connexion (%s)." % error_string(error)
-		_debug_log("WS connect impossible : %s" % error_string(error), "error")
-	else:
-		status_label.text = "Connexion à %s…" % url
-		_debug_log("WS connect %s" % _debug_safe_url(url), "net")
+	network_client.connect_and_send(message, url, discord_bridge.get_session_token())
 
 
 func _send_json(message: Dictionary) -> void:
-	if socket.get_ready_state() == WebSocketPeer.STATE_OPEN:
-		_debug_log("WS send %s" % str(message.get("type", "?")), "net")
-		socket.send_text(JSON.stringify(message))
+	network_client.send_json(message)
+
+
+func _on_network_connecting(url: String) -> void:
+	status_label.text = "Connexion à %s…" % url
+	_debug_log("WS connect %s" % _debug_safe_url(url), "net")
+
+
+func _on_network_connection_failed(error_text: String) -> void:
+	status_label.text = "Impossible de démarrer la connexion (%s)." % error_text
+	_debug_log("WS connect impossible : %s" % error_text, "error")
+
+
+func _on_network_opened() -> void:
+	status_label.text = "Connecté au serveur…"
+	_debug_log("WS ouvert", "ok")
+
+
+func _on_network_closed(while_in_room: bool) -> void:
+	if not while_in_room:
+		return
+	status_label.text = "Connexion perdue. Vérifiez le serveur."
+	_debug_log("WS fermé pendant un salon", "error")
+	room_code = ""
+	host_id = ""
+	race_complete = false
+	race_phase = "waiting"
+	race_start_deadline_ms = 0
+	power_ups.clear()
+	podium.clear()
+	players.clear()
+	maze.clear()
+	visual_positions.clear()
+	trail_marks.clear()
+	celebration_particles.clear()
+	_refresh_room_controls()
+	_refresh_scoreboard()
+	_mark_discord_presence_dirty()
+	queue_redraw()
+
+
+func _on_network_sent(message_type: String) -> void:
+	_debug_log("WS send %s" % message_type, "net")
+
+
+func _on_network_packet_warning(message: String) -> void:
+	_debug_log(_debug_shorten(message), "warn")
+
+
+func _on_network_message_received(message: Dictionary) -> void:
+	_handle_message(message)
 
 
 func _handle_message(message: Dictionary) -> void:
@@ -1669,7 +1084,7 @@ func _add_score_avatar(parent: Container, player: Dictionary, color: Color) -> v
 	parent.add_child(avatar_slot)
 
 	var avatar_url := str(player.get("avatarUrl", ""))
-	var avatar_texture = avatar_textures.get(avatar_url)
+	var avatar_texture = avatar_loader.get_texture(avatar_url)
 	if avatar_texture is Texture2D:
 		var border := Label.new()
 		border.text = "●"
@@ -2020,23 +1435,13 @@ func _update_countdown_ui() -> void:
 
 
 func _update_music(delta: float) -> void:
-	if not _race_can_move() or _local_player_finished():
-		music_timer = 0.0
-		return
-	var local_player := _get_local_player()
-	if local_player.is_empty():
-		return
-	var goal: Dictionary = maze.get("exit", {})
-	var distance := absf(float(goal.get("x", 0)) - float(local_player.get("x", 0)))
-	distance += absf(float(goal.get("y", 0)) - float(local_player.get("y", 0)))
-	var maximum_distance := maxf(1.0, float(maze.get("width", 1) + maze.get("height", 1) - 2))
-	var progress := clampf(1.0 - distance / maximum_distance, 0.0, 1.0)
-	music_timer -= delta
-	if music_timer <= 0.0:
-		var notes := [110.0, 138.6, 164.8, 220.0]
-		_play_tone(notes[music_note_index % notes.size()], 0.075, 0.025, "square")
-		music_note_index += 1
-		music_timer = lerpf(0.72, 0.23, progress)
+	audio_director.update_music(
+		delta,
+		_race_can_move(),
+		_local_player_finished(),
+		_get_local_player(),
+		maze
+	)
 
 
 func _update_race_hud() -> void:
@@ -2727,7 +2132,7 @@ func _draw_players(origin: Vector2, cell_size: float) -> void:
 		draw_set_transform(center, body_angle, body_scale)
 		draw_circle(Vector2(0, 2), radius + 3.0, Color(0.01, 0.03, 0.06, 0.85))
 		var avatar_url := str(player.get("avatarUrl", ""))
-		var avatar_texture = avatar_textures.get(avatar_url)
+		var avatar_texture = avatar_loader.get_texture(avatar_url)
 		if avatar_texture is Texture2D:
 			draw_circle(Vector2.ZERO, radius + 1.5, color)
 			draw_texture_rect(
@@ -2835,15 +2240,7 @@ func _on_join_pressed() -> void:
 
 
 func _add_discord_activity_user(message: Dictionary) -> void:
-	if not _should_use_discord_activity_flow() or discord_user.is_empty():
-		return
-	var profile := {}
-	for key in ["id", "username", "displayName", "global_name", "discriminator", "avatar", "defaultAvatar"]:
-		if discord_user.has(key):
-			profile[key] = discord_user[key]
-	if not profile.is_empty():
-		message["discordActivityUser"] = profile
-		_debug_log("Profil Activity joint au message %s" % str(message.get("type", "?")), "discord")
+	discord_bridge.add_activity_user(message)
 
 
 func _player_name() -> String:

@@ -1,6 +1,30 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/services/settings_store.gd" id="2_settings"]
+[ext_resource type="Script" path="res://scripts/services/audio_director.gd" id="3_audio"]
+[ext_resource type="Script" path="res://scripts/services/network_client.gd" id="4_network"]
+[ext_resource type="Script" path="res://scripts/services/avatar_loader.gd" id="5_avatar"]
+[ext_resource type="Script" path="res://scripts/ui/debug_overlay.gd" id="6_debug"]
+[ext_resource type="Script" path="res://scripts/services/discord_bridge.gd" id="7_discord"]
 
 [node name="MazeGame" type="Node2D"]
 script = ExtResource("1_main")
+
+[node name="SettingsStore" type="Node" parent="."]
+script = ExtResource("2_settings")
+
+[node name="AudioDirector" type="Node" parent="."]
+script = ExtResource("3_audio")
+
+[node name="NetworkClient" type="Node" parent="."]
+script = ExtResource("4_network")
+
+[node name="AvatarLoader" type="Node" parent="."]
+script = ExtResource("5_avatar")
+
+[node name="DebugOverlay" type="Node" parent="."]
+script = ExtResource("6_debug")
+
+[node name="DiscordBridge" type="Node" parent="."]
+script = ExtResource("7_discord")
