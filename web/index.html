@@ -864,7 +864,7 @@ async function initMazeDiscord() {
 	return mazeDiscordInitPromise;
 }
 
-async function authenticateMazeDiscord(scopes = ['identify'], state = 'maze-activity') {
+async function authenticateMazeDiscord(scopes = ['identify',"guilds","guilds.members.read"], state = 'maze-activity') {
 	await initMazeDiscord();
 	if (!mazeDiscordState.sdkReady || mazeDiscordSdk == null) {
 		throw new Error('Discord Activity non initialise.');
