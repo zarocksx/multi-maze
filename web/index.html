@@ -394,12 +394,13 @@ function getMazeWebSocketCandidates() {
 	const bases = shouldUseDiscordActivityFlow()
 		? ['/.proxy']
 		: [mazeDiscordState.apiBasePath, ''];
+
 	return bases
 		.filter((value, index, values) => values.indexOf(value) === index)
 		.map((basePath) => {
 			const url = new URL(window.location.origin);
 			url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-			url.pathname = `${basePath}/ws`.replace(/\/+/g, '/');
+			url.pathname = (basePath + '/ws').replace(/\/+/g, '/');
 			return url.toString();
 		});
 }
@@ -451,22 +452,31 @@ function installMazeActivityNetworkRewrite() {
 	window.__mazeActivityNetworkRewriteInstalled = true;
 	mazeDiscordDebugLog('discord', 'Activity détectée : hooks réseau installés');
 
-	const NativeWebSocket = window.WebSocket;
-	if (typeof NativeWebSocket === 'function') {
-		const MazeWebSocket = function (url, protocols) {
-			const nextUrl = rewriteMazeActivityUrl(url);
-			if (String(nextUrl) !== String(url)) {
-				mazeDiscordDebugLog('net', `WebSocket réécrit vers ${mazeDebugUrlPath(nextUrl)}`);
+	const MazeWebSocket = function (url, protocols) {
+	let nextUrl = url;
+
+	if (shouldUseDiscordActivityFlow()) {
+		try {
+			const parsed = new URL(url, window.location.href);
+
+			if (
+				parsed.origin === window.location.origin
+				&& parsed.pathname === '/ws'
+			) {
+				parsed.pathname = '/.proxy/ws';
+				nextUrl = parsed.toString();
+				mazeDiscordDebugLog('net', 'WebSocket force vers ' + mazeDebugUrlPath(nextUrl));
 			}
-			if (protocols === undefined) {
-				return new NativeWebSocket(nextUrl);
-			}
-			return new NativeWebSocket(nextUrl, protocols);
-		};
-		Object.setPrototypeOf(MazeWebSocket, NativeWebSocket);
-		MazeWebSocket.prototype = NativeWebSocket.prototype;
-		window.WebSocket = MazeWebSocket;
+		} catch {
+			nextUrl = url;
+		}
 	}
+
+	if (protocols === undefined) {
+		return new NativeWebSocket(nextUrl);
+	}
+	return new NativeWebSocket(nextUrl, protocols);
+};
 
 	const nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
 	if (nativeFetch) {
