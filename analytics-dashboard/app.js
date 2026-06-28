@@ -2,8 +2,13 @@ const tokenForm = document.getElementById("token-form");
 const tokenInput = document.getElementById("token-input");
 const overviewGrid = document.getElementById("overview-grid");
 const dailyChart = document.getElementById("daily-chart");
+const concurrentChart = document.getElementById("concurrent-chart");
+const joinFailureList = document.getElementById("join-failure-list");
+const roomClosureList = document.getElementById("room-closure-list");
 const mazeScaleChart = document.getElementById("maze-scale-chart");
+const powerUpCountChart = document.getElementById("power-up-count-chart");
 const roomSizeChart = document.getElementById("room-size-chart");
+const parameterList = document.getElementById("parameter-list");
 const consentList = document.getElementById("consent-list");
 const pageList = document.getElementById("page-list");
 const generatedAt = document.getElementById("generated-at");
@@ -23,6 +28,22 @@ function formatDuration(ms) {
   return `${minutes} min ${seconds}s`;
 }
 
+function formatPercent(value) {
+  return new Intl.NumberFormat("fr-FR", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(Number(value || 0));
+}
+
+function formatBucket(value) {
+  return new Date(value).toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function setEmpty(container, text) {
   container.innerHTML = `<div class="empty">${text}</div>`;
 }
@@ -38,6 +59,13 @@ function renderMetrics(summary) {
     ["Messages chat", summary.overview.chatMessages, "Messages de salon"],
     ["Joueurs rejoints", summary.overview.roomJoins, "Entrées dans des salons"],
     ["Durée moyenne", formatDuration(summary.overview.averageRaceDurationMs), "Sur les courses complètes"],
+    ["Pic concurrents", summary.overview.peakConcurrentPlayers10m, "Par tranche de 10 minutes"],
+    ["Taux de depart", formatPercent(summary.funnel?.startRate), "Courses lancees / salons crees"],
+    ["Taux completion", formatPercent(summary.funnel?.completionRate), "Courses terminees / departs"],
+    ["Echecs join", formatPercent(summary.funnel?.joinFailureRate), "Tentatives de join ratees"],
+    ["Lobby moyen", formatDuration(summary.overview.averageLobbyDurationMs), "Avant lancement"],
+    ["Relances", summary.overview.raceRestarts, "Manches relancees"],
+    ["Rounds / salon", summary.overview.averageRoundsPerClosedRoom, "Sur salons fermes"],
   ];
   for (const [label, value, meta] of metrics) {
     const node = metricTemplate.content.firstElementChild.cloneNode(true);
@@ -93,6 +121,54 @@ function renderList(container, rows, labelKey, valueKey, emptyMessage) {
   }
 }
 
+function parameterLabel(parameter) {
+  if (parameter === "mazeScale") return "Taille labyrinthe";
+  if (parameter === "powerUpCount") return "Power-ups";
+  if (parameter === "players") return "Joueurs";
+  return parameter;
+}
+
+function renderParameterUsage(container, rows) {
+  if (!rows.length) {
+    setEmpty(container, "Aucun parametre de partie enregistre.");
+    return;
+  }
+  container.innerHTML = "";
+  for (const row of rows) {
+    const article = document.createElement("article");
+    article.className = "data-row";
+    article.innerHTML = `
+      <span class="data-label"></span>
+      <span class="data-note"></span>
+      <strong class="data-value"></strong>
+    `;
+    article.querySelector(".data-label").textContent = `${parameterLabel(row.parameter)} = ${row.value}`;
+    article.querySelector(".data-note").textContent = `${formatNumber(row.count)} partie${row.count > 1 ? "s" : ""}`;
+    article.querySelector(".data-value").textContent = formatPercent(row.percent);
+    container.appendChild(article);
+  }
+}
+
+function renderJoinFailures(container, rows) {
+  renderList(
+    container,
+    rows.map((row) => ({ label: row.reason, count: row.count })),
+    "label",
+    "count",
+    "Aucun echec de join enregistre."
+  );
+}
+
+function renderRoomClosures(container, rows) {
+  renderList(
+    container,
+    rows.map((row) => ({ label: `${row.phase} / ${row.reason}`, count: row.count })),
+    "label",
+    "count",
+    "Aucune fermeture de salon enregistree."
+  );
+}
+
 async function loadSummary() {
   const token = localStorage.getItem(STORAGE_KEY) || "";
   tokenInput.value = token;
@@ -117,12 +193,32 @@ async function loadSummary() {
     "Aucune activité récente."
   );
   renderBars(
+    concurrentChart,
+    summary.concurrentPlayers10m
+      .filter((row) => Number(row.players || 0) > 0)
+      .slice(-24)
+      .map((row) => ({ label: formatBucket(row.bucketStart), count: row.players })),
+    "label",
+    "count",
+    "Aucun joueur concurrent mesure sur les derniers creneaux."
+  );
+  renderJoinFailures(joinFailureList, summary.joinFailures || []);
+  renderRoomClosures(roomClosureList, summary.roomClosures || []);
+  renderBars(
     mazeScaleChart,
     summary.mazeScales.map((row) => ({ label: `Échelle ${row.scale}`, count: row.count })),
     "label",
     "count",
     "Aucune donnée de taille de labyrinthe."
   );
+  renderBars(
+    powerUpCountChart,
+    (summary.powerUpCounts || []).map((row) => ({ label: `${row.powerUpCount} power-ups`, count: row.count })),
+    "label",
+    "count",
+    "Aucune donnee de power-ups."
+  );
+  renderParameterUsage(parameterList, summary.parameterUsage || []);
   renderBars(
     roomSizeChart,
     summary.roomSizes.map((row) => ({ label: `${row.players} joueur${row.players > 1 ? "s" : ""}`, count: row.count })),
@@ -146,6 +242,11 @@ tokenForm.addEventListener("submit", async (event) => {
 
 loadSummary().catch((error) => {
   setEmpty(overviewGrid, error.message);
+  setEmpty(concurrentChart, "Aucune donnee de concurrence a afficher.");
+  setEmpty(joinFailureList, "Aucune friction de join a afficher.");
+  setEmpty(roomClosureList, "Aucune fermeture de salon a afficher.");
+  setEmpty(powerUpCountChart, "Aucune donnee de power-ups a afficher.");
+  setEmpty(parameterList, "Aucun parametre de partie disponible.");
   setEmpty(dailyChart, "Le dashboard attend un accès autorisé pour afficher les tendances.");
   setEmpty(mazeScaleChart, "Aucune donnée à afficher.");
   setEmpty(roomSizeChart, "Aucune donnée à afficher.");

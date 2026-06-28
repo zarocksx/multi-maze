@@ -112,6 +112,7 @@ var power_up_count_label: Label
 var power_up_count_slider: HSlider
 var score_restart_button: Button
 var wall_shake_toggle: CheckButton
+var help_label: Label
 var player_tooltip: Label
 var held_direction: String = ""
 var move_repeat_timer := 0.0
@@ -130,6 +131,8 @@ var active_power_downs: Dictionary = {}
 var wall_shake_enabled := true
 var touchscreen_available := false
 var touch_controls: PanelContainer
+var touch_pad_surface: Control
+var touch_direction_buttons: Dictionary = {}
 var touch_direction: String = ""
 var gamepad_focus_locked := false
 
@@ -365,17 +368,17 @@ func _build_interface() -> void:
 	status_label.add_theme_color_override("font_color", Color("8fa5bd"))
 	rows.add_child(status_label)
 
-	var help := Label.new()
-	help.text = "Clavier • Manette • Tactile    |    Atteignez la sortie dorée"
-	help.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	help.offset_left = 18
-	help.offset_right = -18
-	help.offset_top = -38
-	help.offset_bottom = -12
-	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	help.add_theme_color_override("font_color", Color("9aa9c2"))
-	help.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(help)
+	help_label = Label.new()
+	help_label.text = "Clavier • Manette • Tactile    |    Atteignez la sortie dorée"
+	help_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	help_label.offset_left = 18
+	help_label.offset_right = -18
+	help_label.offset_top = -38
+	help_label.offset_bottom = -12
+	help_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	help_label.add_theme_color_override("font_color", Color("9aa9c2"))
+	help_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(help_label)
 
 	wall_shake_toggle = CheckButton.new()
 	wall_shake_toggle.text = "Secousse écran"
@@ -407,14 +410,15 @@ func _build_interface() -> void:
 	touch_panel_style.set_corner_radius_all(28)
 	touch_controls.add_theme_stylebox_override("panel", touch_panel_style)
 	root.add_child(touch_controls)
-	var dpad_surface := Control.new()
-	dpad_surface.custom_minimum_size = Vector2(196, 196)
-	dpad_surface.mouse_filter = Control.MOUSE_FILTER_PASS
-	touch_controls.add_child(dpad_surface)
-	_add_touch_direction_button(dpad_surface, "↑", "up", Vector2(68, 6))
-	_add_touch_direction_button(dpad_surface, "←", "left", Vector2(6, 68))
-	_add_touch_direction_button(dpad_surface, "→", "right", Vector2(130, 68))
-	_add_touch_direction_button(dpad_surface, "↓", "down", Vector2(68, 130))
+	touch_pad_surface = Control.new()
+	touch_pad_surface.custom_minimum_size = Vector2(196, 196)
+	touch_pad_surface.mouse_filter = Control.MOUSE_FILTER_PASS
+	touch_controls.add_child(touch_pad_surface)
+	_add_touch_direction_button(touch_pad_surface, "↑", "up", Vector2(68, 6))
+	_add_touch_direction_button(touch_pad_surface, "←", "left", Vector2(6, 68))
+	_add_touch_direction_button(touch_pad_surface, "→", "right", Vector2(130, 68))
+	_add_touch_direction_button(touch_pad_surface, "↓", "down", Vector2(68, 130))
+	_layout_touch_controls()
 
 	player_tooltip = Label.new()
 	player_tooltip.visible = false
@@ -536,20 +540,60 @@ func _add_touch_direction_button(
 	button.button_down.connect(_on_touch_direction_pressed.bind(direction))
 	button.button_up.connect(_on_touch_direction_released.bind(direction))
 	parent.add_child(button)
+	touch_direction_buttons[direction] = button
+
+
+func _layout_touch_controls() -> void:
+	if not is_instance_valid(touch_controls) or not is_instance_valid(touch_pad_surface):
+		return
+	var viewport_size := get_viewport_rect().size
+	var landscape := viewport_size.x >= viewport_size.y
+	var side_margin := 12.0 if landscape else 16.0
+	var bottom_margin := 12.0 if landscape else 16.0
+	var pad_size := clampf(
+		minf(viewport_size.y * (0.54 if landscape else 0.32), viewport_size.x * 0.25),
+		190.0 if landscape else 176.0,
+		228.0 if landscape else 204.0
+	)
+	var button_size := clampf(pad_size * 0.34, 64.0, 78.0)
+	var inner_margin := pad_size * 0.055
+	var center_pos := (pad_size - button_size) * 0.5
+	var far_pos := pad_size - button_size - inner_margin
+
+	touch_controls.offset_left = side_margin
+	touch_controls.offset_top = -pad_size - bottom_margin
+	touch_controls.offset_right = side_margin + pad_size
+	touch_controls.offset_bottom = -bottom_margin
+	touch_pad_surface.custom_minimum_size = Vector2(pad_size, pad_size)
+	touch_pad_surface.size = Vector2(pad_size, pad_size)
+
+	var positions := {
+		"up": Vector2(center_pos, inner_margin),
+		"left": Vector2(inner_margin, center_pos),
+		"right": Vector2(far_pos, center_pos),
+		"down": Vector2(center_pos, far_pos),
+	}
+	for direction in touch_direction_buttons.keys():
+		var button := touch_direction_buttons[direction] as Button
+		button.position = positions.get(direction, Vector2.ZERO)
+		button.size = Vector2(button_size, button_size)
+		button.custom_minimum_size = Vector2(button_size, button_size)
+		button.pivot_offset = button.size * 0.5
+		button.add_theme_font_size_override("font_size", int(clampf(button_size * 0.48, 30.0, 38.0)))
 
 
 func _apply_touch_button_style(button: Button) -> void:
 	var colors := {
-		"normal": Color(0.08, 0.18, 0.27, 0.78),
-		"hover": Color(0.1, 0.27, 0.38, 0.9),
-		"pressed": Color(0.2, 0.66, 0.78, 0.94),
+		"normal": Color(0.05, 0.13, 0.2, 0.84),
+		"hover": Color(0.08, 0.26, 0.36, 0.94),
+		"pressed": Color(0.47, 0.9, 1.0, 0.98),
 	}
 	for state in colors:
 		var style := StyleBoxFlat.new()
 		style.bg_color = colors[state]
-		style.border_color = Color(0.51, 0.91, 1.0, 0.52)
-		style.set_border_width_all(2)
-		style.set_corner_radius_all(18)
+		style.border_color = Color(0.66, 0.95, 1.0, 0.72)
+		style.set_border_width_all(3 if state == "pressed" else 2)
+		style.set_corner_radius_all(20)
 		button.add_theme_stylebox_override(state, style)
 	button.add_theme_color_override("font_color", Color("eafcff"))
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
@@ -874,6 +918,7 @@ func _refresh_room_controls() -> void:
 func _refresh_touch_controls() -> void:
 	if not touch_controls:
 		return
+	_layout_touch_controls()
 	var active_phase := race_phase == "countdown" or race_phase == "running"
 	var show_controls := (
 		touchscreen_available
@@ -884,6 +929,8 @@ func _refresh_touch_controls() -> void:
 	)
 	touch_controls.visible = show_controls
 	wall_shake_toggle.visible = not (touchscreen_available and not room_code.is_empty())
+	if is_instance_valid(help_label):
+		help_label.visible = room_code.is_empty()
 	if not show_controls:
 		touch_direction = ""
 
@@ -892,11 +939,29 @@ func _on_touch_direction_pressed(direction: String) -> void:
 	touch_direction = direction
 	held_direction = ""
 	move_repeat_timer = 0.0
+	_vibrate(18)
+	_play_tone(310.0, 0.035, 0.035, "square")
+	_pulse_touch_button(direction)
 
 
 func _on_touch_direction_released(direction: String) -> void:
 	if touch_direction == direction:
 		touch_direction = ""
+
+
+func _pulse_touch_button(direction: String) -> void:
+	var button := touch_direction_buttons.get(direction) as Button
+	if not is_instance_valid(button):
+		return
+	button.pivot_offset = button.size * 0.5
+	var tween := create_tween()
+	tween.tween_property(button, "scale", Vector2.ONE * 1.08, 0.045)
+	tween.tween_property(button, "scale", Vector2.ONE, 0.11).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _vibrate(duration_ms: int) -> void:
+	if touchscreen_available or OS.has_feature("web"):
+		Input.vibrate_handheld(duration_ms)
 
 
 func _refresh_scoreboard() -> void:
@@ -959,6 +1024,7 @@ func _set_players(next_players: Array) -> void:
 		_play_tone(520.0, 0.3, 0.18, "square", 520.0)
 		if str(finished_player.get("id", "")) == player_id:
 			finish_slow_timer = 0.48
+			_vibrate(75)
 
 
 func _set_winner(next_winner: String) -> void:
@@ -982,16 +1048,16 @@ func _update_movement(delta: float) -> void:
 		move_repeat_timer = 0.0
 	elif direction != held_direction:
 		held_direction = direction
-		move_repeat_timer = 0.18
+		move_repeat_timer = 0.11
 		_try_send_move(direction)
 	else:
 		move_repeat_timer -= delta
 		if move_repeat_timer <= 0.0:
-			move_repeat_timer = 0.085
+			move_repeat_timer = 0.068
 			if _local_effect_active("speed"):
-				move_repeat_timer = 0.04
+				move_repeat_timer = 0.034
 			elif _local_effect_active("slow"):
-				move_repeat_timer = 0.14
+				move_repeat_timer = 0.12
 			_try_send_move(direction)
 
 
@@ -1019,7 +1085,8 @@ func _try_send_move(direction: String) -> void:
 	if _can_local_player_move(direction):
 		_send_json({"type": "move", "direction": direction})
 	elif wall_hit_timer <= 0.0:
-		wall_hit_timer = 0.16
+		wall_hit_timer = 0.2
+		_vibrate(30)
 		if wall_shake_enabled:
 			_play_tone(95.0, 0.09, 0.11, "noise")
 
@@ -1029,42 +1096,50 @@ func _can_local_player_move(direction: String) -> bool:
 
 
 func _spawn_trail(from: Vector2, to: Vector2, color: Color, boosted: bool = false) -> void:
-	var mark_count := 7 if boosted else 4
+	var mark_count := 13 if boosted else 8
 	for step in range(mark_count):
 		trail_marks.append(
 			{
 				"position": from.lerp(to, float(step) / mark_count),
 				"color": color,
-				"life": (0.38 if boosted else 0.22) + step * 0.035,
-				"max_life": 0.58 if boosted else 0.36,
+				"life": (0.5 if boosted else 0.32) + step * 0.028,
+				"max_life": 0.68 if boosted else 0.46,
+				"radius": 0.26 if boosted else 0.21,
 			}
 		)
 	movement_ripples.append(
-		{"position": to, "color": color, "life": 0.38, "max_life": 0.38}
+		{"position": to, "color": color, "life": 0.52, "max_life": 0.52, "width": 3.0}
 	)
+	if boosted:
+		movement_ripples.append(
+			{"position": to, "color": color, "life": 0.68, "max_life": 0.68, "width": 4.0}
+		)
+	_trim_particles(trail_marks, 180)
+	_trim_particles(movement_ripples, 72)
 
 
 func _start_celebration(dominant_color: Color = Color.TRANSPARENT) -> void:
 	celebration_particles.clear()
 	var goal: Dictionary = maze.get("exit", {})
 	var origin := GameState.grid_center(goal)
-	for index in range(52):
+	for index in range(84):
 		var angle := random.randf_range(0.0, TAU)
-		var speed := random.randf_range(1.4, 4.8)
+		var speed := random.randf_range(1.8, 6.2)
 		var particle_color := Color(
 			RaceVisuals.CELEBRATION_COLORS[index % RaceVisuals.CELEBRATION_COLORS.size()]
 		)
-		if dominant_color.a > 0.0 and index < 34:
+		if dominant_color.a > 0.0 and index < 48:
 			particle_color = dominant_color
 		celebration_particles.append(
 			{
 				"position": origin,
 				"velocity": Vector2.from_angle(angle) * speed,
 				"color": particle_color,
-				"life": random.randf_range(0.75, 1.35),
-				"max_life": 1.35,
+				"life": random.randf_range(0.85, 1.55),
+				"max_life": 1.55,
 			}
 		)
+	_trim_particles(celebration_particles, 140)
 
 
 func _update_effects(delta: float) -> void:
@@ -1118,6 +1193,11 @@ func _decay_life_particles(particles: Array, visual_delta: float) -> void:
 			particles[index] = particle
 
 
+func _trim_particles(particles: Array, max_count: int) -> void:
+	while particles.size() > max_count:
+		particles.remove_at(0)
+
+
 func _update_countdown_ui() -> void:
 	race_hud.update_countdown(race_phase, race_start_deadline_ms, go_flash_until_ms)
 
@@ -1151,21 +1231,24 @@ func _handle_power_event(event) -> void:
 	var kind := str(event.get("kind", ""))
 	race_hud.show_power_event(event)
 	_spawn_pickup_particles(event, RaceVisuals.power_event_color(kind))
+	if str(event.get("actorId", "")) == player_id:
+		_vibrate(45)
 
 
 func _spawn_pickup_particles(event: Dictionary, color: Color) -> void:
 	var start := GameState.grid_center(event)
-	for index in range(14):
+	for index in range(22):
 		pickup_particles.append(
 			{
-				"start": start + Vector2.from_angle(index * TAU / 14.0) * 0.28,
+				"start": start + Vector2.from_angle(index * TAU / 22.0) * random.randf_range(0.2, 0.42),
 				"target_id": str(event.get("actorId", "")),
 				"color": color,
-				"life": 0.65,
-				"max_life": 0.65,
-				"curve": random.randf_range(-0.3, 0.3),
+				"life": random.randf_range(0.62, 0.86),
+				"max_life": 0.86,
+				"curve": random.randf_range(-0.44, 0.44),
 			}
 		)
+	_trim_particles(pickup_particles, 120)
 
 
 func _update_player_tooltip() -> void:
@@ -1333,10 +1416,17 @@ func _update_power_up_count_label() -> void:
 
 
 func _on_score_restart_pressed() -> void:
+	_play_tone(330.0, 0.09, 0.08, "square", 180.0)
+	_vibrate(35)
 	_send_json({"type": "restart"})
 
 
 func _on_viewport_resized() -> void:
 	_layout_lobby_panel()
 	_layout_menu_debug_panel()
+	_layout_touch_controls()
+	if is_instance_valid(race_hud):
+		race_hud.layout(get_viewport_rect().size)
+	if is_instance_valid(scoreboard_panel):
+		scoreboard_panel.layout(get_viewport_rect().size)
 	_queue_world_redraw()

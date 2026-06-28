@@ -184,7 +184,9 @@ h1 {
 
 .chart-meta,
 .data-row {
+  display: grid;
   grid-template-columns: auto 1fr auto;
+  gap: 12px;
   align-items: center;
 }
 
@@ -194,9 +196,14 @@ h1 {
 }
 
 .chart-value,
-.data-value {
+.data-value,
+.data-note {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.data-note {
+  font-size: 0.9rem;
 }
 
 .chart-bar {

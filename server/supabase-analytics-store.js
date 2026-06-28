@@ -1,6 +1,7 @@
 "use strict";
 
 const { AnalyticsStore, buildSummary, normalizeEvent } = require("./analytics-store");
+const { GoogleSheetsAnalyticsStore } = require("./google-sheets-analytics-store");
 
 class SupabaseAnalyticsStore {
   constructor({
@@ -88,6 +89,34 @@ class SupabaseAnalyticsStore {
 
 function createAnalyticsStore(options = {}) {
   const fallbackStore = new AnalyticsStore(options);
+  const googleSheetsRequested = Boolean(
+    options.googleSheetsSpreadsheetId
+      || process.env.GOOGLE_SHEETS_SPREADSHEET_ID
+      || process.env.GOOGLE_SPREADSHEET_ID
+      || options.googleServiceAccountEmail
+      || options.googlePrivateKey
+      || options.googleServiceAccountJson
+      || process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
+      || process.env.GOOGLE_PRIVATE_KEY
+      || process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+      || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON,
+  );
+  if (googleSheetsRequested) {
+    const googleSheetsStore = new GoogleSheetsAnalyticsStore({
+      ...options,
+      spreadsheetId: options.googleSheetsSpreadsheetId
+        || process.env.GOOGLE_SHEETS_SPREADSHEET_ID
+        || process.env.GOOGLE_SPREADSHEET_ID
+        || undefined,
+      serviceAccountEmail: options.googleServiceAccountEmail,
+      privateKey: options.googlePrivateKey,
+      serviceAccountJson: options.googleServiceAccountJson,
+      applicationCredentials: options.googleApplicationCredentials,
+      fallbackStore,
+    });
+    if (googleSheetsStore.enabled) return googleSheetsStore;
+  }
+
   const supabaseUrl = options.supabaseUrl ?? process.env.SUPABASE_URL ?? "";
   const serviceRoleKey = options.serviceRoleKey ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
   if (!supabaseUrl || !serviceRoleKey) return fallbackStore;

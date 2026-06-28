@@ -41,6 +41,31 @@
         <div id="daily-chart" class="chart-list"></div>
       </section>
 
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Joueurs concurrents</h2>
+          <p>Nombre de joueurs actifs par tranche de 10 minutes.</p>
+        </div>
+        <div id="concurrent-chart" class="chart-list"></div>
+      </section>
+
+      <section class="panel split">
+        <div>
+          <div class="panel-head">
+            <h2>Friction join</h2>
+            <p>Raisons d'echec quand un joueur tente de rejoindre.</p>
+          </div>
+          <div id="join-failure-list" class="data-list"></div>
+        </div>
+        <div>
+          <div class="panel-head">
+            <h2>Fermetures</h2>
+            <p>Etat des salons au moment ou ils disparaissent.</p>
+          </div>
+          <div id="room-closure-list" class="data-list"></div>
+        </div>
+      </section>
+
       <section class="panel split">
         <div>
           <div class="panel-head">
@@ -55,6 +80,23 @@
             <p>Nombre de joueurs présents lors des événements suivis.</p>
           </div>
           <div id="room-size-chart" class="chart-list compact"></div>
+        </div>
+      </section>
+
+      <section class="panel split">
+        <div>
+          <div class="panel-head">
+            <h2>Power-ups</h2>
+            <p>Quantite configuree au lancement des parties.</p>
+          </div>
+          <div id="power-up-count-chart" class="chart-list compact"></div>
+        </div>
+        <div>
+          <div class="panel-head">
+            <h2>Parametres utilises</h2>
+            <p>Part des parties lancees avec chaque valeur.</p>
+          </div>
+          <div id="parameter-list" class="data-list"></div>
         </div>
       </section>
 

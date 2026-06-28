@@ -52,6 +52,32 @@ ANALYTICS_RETENTION_DAYS=30
 
 Sans `ANALYTICS_DASHBOARD_TOKEN`, le dashboard reste limité à `localhost`.
 
+### Stockage Google Sheets
+
+Le serveur peut aussi utiliser le Google Sheet analytics fourni comme stockage principal. Le classeur cible par defaut est :
+
+```text
+1cbvBLeqODtcOFhKm37IDyHyxysntyYODRvj5VP9ahWc
+```
+
+Configuration recommandee :
+
+```text
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+```
+
+Ou, si vous preferez separer les champs :
+
+```text
+GOOGLE_SERVICE_ACCOUNT_EMAIL=compte-service@projet.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+GOOGLE_SHEETS_SPREADSHEET_ID=1cbvBLeqODtcOFhKm37IDyHyxysntyYODRvj5VP9ahWc
+```
+
+Partagez le Google Sheet avec l'email du compte de service en droit d'edition. Au premier evenement, le serveur cree les onglets `Evenements`, `Courses`, `Synthese`, `Funnel`, `Friction`, `Joueurs_10min` et `Parametres`. Sans identifiants Google, le stockage local ou Supabase reste utilise.
+
+Le tracking plan v1 est documente dans `docs/analytics-tracking-plan-v1.md`. Il relie chaque evenement a une decision produit ou business, et liste les donnees volontairement exclues pour rester sobre cote RGPD.
+
 ## Configurer la connexion Discord
 
 La connexion Discord fonctionne dans l’export Web. Le secret OAuth reste uniquement sur le serveur et les sessions sont stockées dans un cookie `HttpOnly` signé.

@@ -156,7 +156,7 @@ func _draw() -> void:
 		top_margin + (available.y - maze_size.y) * 0.5
 	)
 	if wall_shake_enabled and wall_hit_timer > 0.0:
-		var shake := wall_hit_timer / 0.16 * 2.8
+		var shake := wall_hit_timer / 0.2 * 4.0
 		origin += Vector2(sin(animation_time * 91.0), cos(animation_time * 77.0)) * shake
 	last_maze_origin = origin
 	last_cell_size = cell_size
@@ -174,6 +174,7 @@ func _draw() -> void:
 	_draw_maze_walls(origin, cell_size, width, height)
 	_draw_celebration(origin, cell_size)
 	_draw_players(origin, cell_size)
+	_draw_wall_hit_fx(origin, cell_size)
 	_draw_power_down_screen_fx(viewport_size)
 	_draw_countdown_fx(viewport_size)
 
@@ -465,12 +466,20 @@ func _draw_direction_hint(origin: Vector2, cell_size: float) -> void:
 	var from := origin + (position + Vector2(0.5, 0.5)) * cell_size
 	var goal: Dictionary = game_state.maze.get("exit", {})
 	var to := origin + GameState.grid_center(goal) * cell_size
+	var hint_alpha := 0.24 + (sin(animation_time * 7.0) + 1.0) * 0.09
+	draw_circle(from, cell_size * 0.42, Color(1.0, 0.82, 0.36, hint_alpha * 0.35))
 	for segment in range(14):
-		if segment % 2 == 1:
+		if (segment + int(animation_time * 9.0)) % 2 == 1:
 			continue
 		var start := from.lerp(to, float(segment) / 14.0)
 		var end := from.lerp(to, float(segment + 1) / 14.0)
-		draw_line(start, end, Color(1.0, 0.82, 0.36, 0.24), 2.0, true)
+		draw_line(
+			start,
+			end,
+			Color(1.0, 0.82, 0.36, hint_alpha),
+			clampf(cell_size * 0.09, 2.0, 4.0),
+			true
+		)
 
 
 func _draw_trails(origin: Vector2, cell_size: float) -> void:
@@ -482,9 +491,9 @@ func _draw_trails(origin: Vector2, cell_size: float) -> void:
 			1.0
 		)
 		var color: Color = mark.get("color", Color.WHITE)
-		color.a = life_ratio * 0.28
+		color.a = life_ratio * 0.44
 		var center := origin + (position + Vector2(0.5, 0.5)) * cell_size
-		draw_circle(center, cell_size * 0.18 * life_ratio, color)
+		draw_circle(center, cell_size * float(mark.get("radius", 0.21)) * life_ratio, color)
 
 
 func _draw_movement_ripples(origin: Vector2, cell_size: float) -> void:
@@ -497,9 +506,9 @@ func _draw_movement_ripples(origin: Vector2, cell_size: float) -> void:
 		var position: Vector2 = ripple.get("position", Vector2.ZERO)
 		var center := origin + (position + Vector2(0.5, 0.5)) * cell_size
 		var color: Color = ripple.get("color", Color.WHITE)
-		color.a = life_ratio * 0.4
-		var radius := cell_size * (0.12 + (1.0 - life_ratio) * 0.34)
-		draw_arc(center, radius, 0.0, TAU, 28, color, 2.0, true)
+		color.a = life_ratio * 0.58
+		var radius := cell_size * (0.16 + (1.0 - life_ratio) * 0.46)
+		draw_arc(center, radius, 0.0, TAU, 32, color, float(ripple.get("width", 2.4)), true)
 
 
 func _draw_pickup_particles(origin: Vector2, cell_size: float) -> void:
@@ -518,7 +527,8 @@ func _draw_pickup_particles(origin: Vector2, cell_size: float) -> void:
 		var center := origin + position * cell_size
 		var color: Color = particle.get("color", Color.WHITE)
 		color.a = life_ratio
-		draw_circle(center, clampf(cell_size * 0.06 * life_ratio, 1.2, 3.5), color)
+		draw_circle(center, clampf(cell_size * 0.085 * life_ratio, 1.6, 4.8), color)
+		draw_circle(center, clampf(cell_size * 0.032 * life_ratio, 1.0, 2.2), Color.WHITE)
 
 
 func _draw_celebration(origin: Vector2, cell_size: float) -> void:
@@ -532,7 +542,7 @@ func _draw_celebration(origin: Vector2, cell_size: float) -> void:
 		var color: Color = particle.get("color", Color.WHITE)
 		color.a = life_ratio
 		var center := origin + position * cell_size
-		var radius := clampf(cell_size * 0.085 * life_ratio, 1.5, 5.0)
+		var radius := clampf(cell_size * 0.105 * life_ratio, 1.8, 6.4)
 		draw_circle(center, radius, color)
 
 
@@ -654,16 +664,43 @@ func _draw_players(origin: Vector2, cell_size: float) -> void:
 				true
 			)
 		if id == game_state.player_id:
+			draw_circle(center, radius + 12.0, Color(1.0, 1.0, 1.0, 0.07))
 			draw_arc(
 				center,
-				radius + 5.0,
+				radius + 6.0,
 				animation_time * 2.2,
 				animation_time * 2.2 + PI * 1.55,
 				28,
 				Color.WHITE,
-				2.0,
+				3.0,
 				true
 			)
+
+
+func _draw_wall_hit_fx(origin: Vector2, cell_size: float) -> void:
+	if wall_hit_timer <= 0.0:
+		return
+	var player := game_state.get_local_player()
+	if player.is_empty():
+		return
+	var id := str(player.get("id", ""))
+	var target := GameState.grid_position(player)
+	var visual_position: Vector2 = visual_positions.get(id, target)
+	var center := origin + (visual_position + Vector2(0.5, 0.5)) * cell_size
+	var strength := clampf(wall_hit_timer / 0.2, 0.0, 1.0)
+	var radius := clampf(cell_size * 0.46, 7.0, 18.0)
+	var hot := Color(1.0, 0.32, 0.42, strength * 0.82)
+	draw_arc(center, radius + (1.0 - strength) * 18.0, 0.0, TAU, 32, hot, 3.0, true)
+	for ray in range(8):
+		var angle := animation_time * 9.0 + ray * TAU / 8.0
+		var direction := Vector2.from_angle(angle)
+		draw_line(
+			center + direction * radius * 0.6,
+			center + direction * (radius + 16.0 * strength),
+			Color(1.0, 0.72, 0.48, strength * 0.62),
+			2.5,
+			true
+		)
 
 
 func _draw_countdown_fx(viewport_size: Vector2) -> void:

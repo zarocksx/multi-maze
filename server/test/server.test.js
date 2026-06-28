@@ -6,6 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { WebSocket } = require("ws");
+const { buildSummary, normalizeEvent } = require("../analytics-store");
 const {
   Wall,
   MAX_PLAYERS,
@@ -136,6 +137,20 @@ test("un WebSocket Activity authentifie via query string utilise le profil Disco
   assert.equal(room.players[0].discord, true);
 });
 
+test("le WebSocket Activity proxy accepte /.proxy/ws", async (context) => {
+  const server = createGameServer();
+  const address = await server.start(0, "127.0.0.1");
+  context.after(() => server.close());
+  const connection = await connect(`ws://127.0.0.1:${address.port}/.proxy/ws`);
+  context.after(() => connection.socket.terminate());
+  const hello = await connection.hello;
+  assert.equal(hello.type, "hello");
+  const roomMessage = waitForMessage(connection.socket, "room");
+  connection.socket.send(JSON.stringify({ type: "create", name: "Proxy Host" }));
+  const room = await roomMessage;
+  assert.equal(room.players[0].name, "Proxy Host");
+});
+
 test("un profil Activity non authentifie fournit pseudo et avatar d'affichage", async (context) => {
   const server = createGameServer();
   const address = await server.start(0, "127.0.0.1");
@@ -222,9 +237,17 @@ test("le endpoint Activity Discord retourne un token de session utilisable sans 
     redirectUri: "http://127.0.0.1/auth/discord/callback",
     sessionSecret: "activity-oauth-secret",
   };
+  const fetchedUrls = [];
   const fetchImpl = async (url) => {
+    fetchedUrls.push(String(url));
     if (String(url).endsWith("/oauth2/token")) {
       return new Response(JSON.stringify({ access_token: "discord-activity-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).includes("/users/@me/guilds/444444444444444444/member")) {
+      return new Response(JSON.stringify({ avatar: "guildoauthavatar" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -245,13 +268,22 @@ test("le endpoint Activity Discord retourne un token de session utilisable sans 
   const authResponse = await fetch(`${origin}/api/auth/discord/activity`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code: "activity-code" }),
+    body: JSON.stringify({ code: "activity-code", guild_id: "444444444444444444" }),
   });
   assert.equal(authResponse.status, 200);
   const authPayload = await authResponse.json();
   assert.equal(authPayload.authenticated, true);
   assert.equal(authPayload.access_token, "discord-activity-token");
+  assert.equal(authPayload.user.guildAvatar, "guildoauthavatar");
+  assert.equal(
+    authPayload.user.avatarUrl,
+    "/api/discord/avatar/guild/444444444444444444/user/333333333333333333/guildoauthavatar.png",
+  );
   assert.ok(authPayload.session);
+  assert.equal(
+    fetchedUrls.includes("https://discord.com/api/v10/users/@me/guilds/444444444444444444/member"),
+    true,
+  );
 
   const profile = await fetch(`${origin}/api/auth/me`, {
     headers: { Authorization: `Bearer ${authPayload.session}` },
@@ -259,7 +291,7 @@ test("le endpoint Activity Discord retourne un token de session utilisable sans 
   const payload = await profile.json();
   assert.equal(payload.authenticated, true);
   assert.equal(payload.user.displayName, "Activity OAuth");
-  assert.equal(payload.user.avatarUrl, "/api/discord/avatar/default/4.png");
+  assert.equal(payload.user.avatarUrl, "/api/discord/avatar/guild/444444444444444444/user/333333333333333333/guildoauthavatar.png");
 });
 
 test("les chemins Activity proxy exposent les mêmes endpoints JSON", async (context) => {
@@ -572,6 +604,119 @@ test("deux clients peuvent créer et rejoindre le même salon", async (context) 
   assert.ok(countdown.startAt > countdown.serverNow);
 });
 
+test("normalizeEvent conserve les proprietes analytics camelCase", () => {
+  const event = normalizeEvent({
+    ts: Date.parse("2026-06-28T12:00:00.000Z"),
+    type: "race_completed",
+    session: "race-session",
+    props: {
+      players: 3,
+      mazeScale: 7,
+      powerUpCount: 12,
+      durationMs: 95_000,
+      ignored: { nested: true },
+    },
+  });
+
+  assert.equal(event.props.players, 3);
+  assert.equal(event.props.mazeScale, 7);
+  assert.equal(event.props.powerUpCount, 12);
+  assert.equal(event.props.durationMs, 95_000);
+  assert.equal(event.props.ignored, undefined);
+});
+
+test("le resume analytics calcule duree, concurrence et parametres par partie", () => {
+  const now = Date.parse("2026-06-28T12:30:00.000Z");
+  const events = [
+    {
+      ts: Date.parse("2026-06-28T11:58:00.000Z"),
+      type: "room_created",
+      session: "race-a",
+      props: { players: 1, mazeScale: 5, powerUpCount: 10 },
+    },
+    {
+      ts: Date.parse("2026-06-28T11:59:00.000Z"),
+      type: "room_created",
+      session: "race-b",
+      props: { players: 1, mazeScale: 10, powerUpCount: 4 },
+    },
+    {
+      ts: Date.parse("2026-06-28T11:59:30.000Z"),
+      type: "room_join_failed",
+      props: { reason: "not_found" },
+    },
+    {
+      ts: Date.parse("2026-06-28T12:00:00.000Z"),
+      type: "race_started",
+      session: "race-a",
+      props: { players: 3, mazeScale: 5, powerUpCount: 10, round: 1, startAtMs: Date.parse("2026-06-28T12:00:00.000Z"), lobbyDurationMs: 120_000 },
+    },
+    {
+      ts: Date.parse("2026-06-28T12:12:00.000Z"),
+      type: "race_completed",
+      session: "race-a",
+      props: { players: 3, mazeScale: 5, powerUpCount: 10, round: 1, durationMs: 12 * 60_000 },
+    },
+    {
+      ts: Date.parse("2026-06-28T12:05:00.000Z"),
+      type: "race_started",
+      session: "race-b",
+      props: { players: 2, mazeScale: 10, powerUpCount: 4, round: 1, startAtMs: Date.parse("2026-06-28T12:05:00.000Z"), lobbyDurationMs: 360_000 },
+    },
+    {
+      ts: Date.parse("2026-06-28T12:18:00.000Z"),
+      type: "race_completed",
+      session: "race-b",
+      props: { players: 2, mazeScale: 10, powerUpCount: 4, round: 1, durationMs: 13 * 60_000 },
+    },
+    {
+      ts: Date.parse("2026-06-28T12:19:00.000Z"),
+      type: "race_restarted",
+      session: "race-b",
+      props: { players: 2, mazeScale: 10, powerUpCount: 4, round: 2, previousRounds: 1, completedRounds: 1 },
+    },
+    {
+      ts: Date.parse("2026-06-28T12:20:00.000Z"),
+      type: "room_closed",
+      session: "race-b",
+      props: { phase: "complete", reason: "last_player_left", roundsStarted: 1, completedRounds: 1, roomAgeMs: 21 * 60_000 },
+    },
+  ].map((event) => normalizeEvent(event, now));
+
+  const summary = buildSummary(events, 30, now, 1);
+  assert.equal(summary.overview.averageRaceDurationMs, 750_000);
+  assert.equal(summary.overview.averageLobbyDurationMs, 240_000);
+  assert.equal(summary.overview.raceRestarts, 1);
+  assert.equal(summary.overview.roomJoinFailures, 1);
+  assert.equal(summary.funnel.startRate, 1);
+  assert.equal(summary.funnel.completionRate, 1);
+  assert.equal(summary.funnel.joinFailureRate, 1);
+  assert.equal(summary.funnel.restartRate, 0.5);
+  assert.deepEqual(summary.joinFailures, [{ reason: "not_found", count: 1 }]);
+  assert.deepEqual(summary.roomClosures, [{ phase: "complete", reason: "last_player_left", count: 1 }]);
+  assert.equal(summary.overview.peakConcurrentPlayers10m, 5);
+  assert.deepEqual(
+    summary.concurrentPlayers10m
+      .filter((bucket) => bucket.bucketStart >= "2026-06-28T12:00:00.000Z" && bucket.bucketStart <= "2026-06-28T12:10:00.000Z")
+      .map(({ bucketStart, players }) => ({ bucketStart, players })),
+    [
+      { bucketStart: "2026-06-28T12:00:00.000Z", players: 5 },
+      { bucketStart: "2026-06-28T12:10:00.000Z", players: 5 },
+    ],
+  );
+  assert.deepEqual(summary.mazeScales, [
+    { scale: 5, count: 1 },
+    { scale: 10, count: 1 },
+  ]);
+  assert.deepEqual(
+    summary.parameterUsage.filter((row) => row.parameter === "powerUpCount"),
+    [
+      { parameter: "powerUpCount", value: 4, count: 1, percent: 0.5 },
+      { parameter: "powerUpCount", value: 10, count: 1, percent: 0.5 },
+    ],
+  );
+});
+
 test("le consentement analytics est explicite et le dashboard est protÃ©gÃ©", async (context) => {
   const server = createGameServer({
     analyticsConfig: {
@@ -629,6 +774,10 @@ test("les analytics de jeu remontent dans le rÃ©sumÃ©", async (context) => {
   first.send(JSON.stringify({ type: "create", name: "Bleu" }));
   const created = await firstRoom;
 
+  const joinError = waitForMessage(second, "error");
+  second.send(JSON.stringify({ type: "join", room: "ZZZZ", name: "Rose" }));
+  await joinError;
+
   const hostUpdate = waitForMessage(first, "room");
   const secondRoom = waitForMessage(second, "room");
   second.send(JSON.stringify({ type: "join", room: created.room, name: "Rose" }));
@@ -638,8 +787,17 @@ test("les analytics de jeu remontent dans le rÃ©sumÃ©", async (context) => {
   first.send(JSON.stringify({ type: "start" }));
   await countdownState;
 
+  first.terminate();
+  second.terminate();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
   const summary = await server.analyticsStore.summary({ days: 14 });
   assert.equal(summary.overview.roomsCreated, 1);
   assert.equal(summary.overview.roomJoins, 1);
+  assert.equal(summary.overview.roomJoinFailures, 1);
+  assert.equal(summary.overview.roomsClosed, 1);
   assert.equal(summary.overview.raceStarts, 1);
+  assert.equal(summary.funnel.joinFailureRate, 0.5);
+  assert.deepEqual(summary.joinFailures, [{ reason: "not_found", count: 1 }]);
+  assert.deepEqual(summary.roomClosures, [{ phase: "countdown", reason: "last_player_left", count: 1 }]);
 });

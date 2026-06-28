@@ -240,6 +240,7 @@ body {
 		<script>
 const DISCORD_ACTIVITY_SESSION_KEY = 'maze-discord-activity-session';
 const MAZE_DISCORD_LOG_LIMIT = 24;
+const DISCORD_ACTIVITY_SCOPES = ['identify', 'guilds', 'guilds.members.read', 'rpc.activities.write'];
 
 const mazeDiscordState = {
 	enabled: false,
@@ -452,31 +453,37 @@ function installMazeActivityNetworkRewrite() {
 	window.__mazeActivityNetworkRewriteInstalled = true;
 	mazeDiscordDebugLog('discord', 'Activity détectée : hooks réseau installés');
 
+	const NativeWebSocket = window.WebSocket;
+	if (typeof NativeWebSocket !== 'function') {
+		return;
+	}
+
 	const MazeWebSocket = function (url, protocols) {
-	let nextUrl = url;
+		let nextUrl = url;
 
-	if (shouldUseDiscordActivityFlow()) {
-		try {
-			const parsed = new URL(url, window.location.href);
+		if (shouldUseDiscordActivityFlow()) {
+			try {
+				const parsed = new URL(url, window.location.href);
 
-			if (
-				parsed.origin === window.location.origin
-				&& parsed.pathname === '/ws'
-			) {
-				parsed.pathname = '/.proxy/ws';
-				nextUrl = parsed.toString();
-				mazeDiscordDebugLog('net', 'WebSocket force vers ' + mazeDebugUrlPath(nextUrl));
+				if (parsed.origin === window.location.origin && parsed.pathname === '/ws') {
+					parsed.pathname = '/.proxy/ws';
+					nextUrl = parsed.toString();
+					mazeDiscordDebugLog('net', 'WebSocket force vers ' + mazeDebugUrlPath(nextUrl));
+				}
+			} catch {
+				nextUrl = url;
 			}
-		} catch {
-			nextUrl = url;
 		}
-	}
 
-	if (protocols === undefined) {
-		return new NativeWebSocket(nextUrl);
-	}
-	return new NativeWebSocket(nextUrl, protocols);
-};
+		if (protocols === undefined) {
+			return new NativeWebSocket(nextUrl);
+		}
+		return new NativeWebSocket(nextUrl, protocols);
+	};
+
+	Object.setPrototypeOf(MazeWebSocket, NativeWebSocket);
+	MazeWebSocket.prototype = NativeWebSocket.prototype;
+	window.WebSocket = MazeWebSocket;
 
 	const nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
 	if (nativeFetch) {
@@ -874,7 +881,7 @@ async function initMazeDiscord() {
 	return mazeDiscordInitPromise;
 }
 
-async function authenticateMazeDiscord(scopes = ['identify',"guilds","guilds.members.read"], state = 'maze-activity') {
+async function authenticateMazeDiscord(scopes = DISCORD_ACTIVITY_SCOPES, state = 'maze-activity') {
 	await initMazeDiscord();
 	if (!mazeDiscordState.sdkReady || mazeDiscordSdk == null) {
 		throw new Error('Discord Activity non initialise.');
@@ -896,7 +903,7 @@ async function authenticateMazeDiscord(scopes = ['identify',"guilds","guilds.mem
 		const { payload } = await fetchMazeDiscordJson('/api/auth/discord/activity', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ code }),
+			body: JSON.stringify({ code, guild_id: mazeDiscordGuildId() }),
 		});
 		const auth = await mazeDiscordSdk.commands.authenticate({
 			access_token: payload.access_token,
@@ -906,7 +913,13 @@ async function authenticateMazeDiscord(scopes = ['identify',"guilds","guilds.mem
 		}
 		setMazeDiscordSessionToken(typeof payload.session === 'string' ? payload.session : '');
 		mazeDiscordState.authenticated = true;
-		setMazeDiscordActivityUser(auth?.user ?? payload.user, auth?.guildMember ?? auth?.guild_member);
+		const authenticatedUser = {
+			...(payload.user ?? {}),
+			...(auth?.user ?? {}),
+		};
+		authenticatedUser.guildId ||= payload.user?.guildId || '';
+		authenticatedUser.guildAvatar ||= payload.user?.guildAvatar || '';
+		setMazeDiscordActivityUser(authenticatedUser, auth?.guildMember ?? auth?.guild_member);
 		mazeDiscordState.activityScopeReady = Array.isArray(auth.scopes)
 			&& auth.scopes.includes('rpc.activities.write');
 		mazeDiscordDebugLog(
@@ -922,7 +935,7 @@ async function authenticateMazeDiscord(scopes = ['identify',"guilds","guilds.mem
 
 async function loginMazeDiscord() {
 	try {
-		await authenticateMazeDiscord(['identify', 'rpc.activities.write']);
+		await authenticateMazeDiscord();
 	} catch (error) {
 		mazeDiscordState.authenticated = false;
 		mazeDiscordState.user = null;

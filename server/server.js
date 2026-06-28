@@ -107,6 +107,12 @@ function sameOriginBaseUrl(request) {
   return `${request.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${request.headers.host || "localhost"}`;
 }
 
+function normalizeActivityProxyPathname(pathname = "/") {
+  if (pathname === "/.proxy") return "/";
+  if (pathname.startsWith("/.proxy/")) return pathname.slice("/.proxy".length);
+  return pathname;
+}
+
 function isDoNotTrackEnabled(request) {
   const dnt = String(request.headers.dnt || request.headers["sec-gpc"] || "").trim();
   return dnt === "1" || dnt.toLowerCase() === "yes";
@@ -623,6 +629,11 @@ function createGameServer({
     supabaseUrl: analyticsConfig.supabaseUrl ?? process.env.SUPABASE_URL ?? "",
     serviceRoleKey: analyticsConfig.serviceRoleKey ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
     table: analyticsConfig.table ?? process.env.SUPABASE_ANALYTICS_TABLE ?? "analytics_events",
+    googleSheetsSpreadsheetId: analyticsConfig.googleSheetsSpreadsheetId ?? process.env.GOOGLE_SHEETS_SPREADSHEET_ID,
+    googleServiceAccountEmail: analyticsConfig.googleServiceAccountEmail ?? process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    googlePrivateKey: analyticsConfig.googlePrivateKey ?? process.env.GOOGLE_PRIVATE_KEY,
+    googleServiceAccountJson: analyticsConfig.googleServiceAccountJson ?? process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
+    googleApplicationCredentials: analyticsConfig.googleApplicationCredentials ?? process.env.GOOGLE_APPLICATION_CREDENTIALS,
     fetchImpl,
   });
 
@@ -708,6 +719,30 @@ function createGameServer({
     return { token, user };
   }
 
+  async function fetchDiscordCurrentGuildMember(accessToken, guildId) {
+    const resolvedGuildId = discordSnowflake(guildId);
+    if (!accessToken || !resolvedGuildId || typeof fetchImpl !== "function") {
+      return null;
+    }
+    const memberResponse = await fetchImpl(`https://discord.com/api/v10/users/@me/guilds/${resolvedGuildId}/member`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!memberResponse.ok) return null;
+    const member = await memberResponse.json();
+    const guildAvatar = discordAvatarHash(member.avatar);
+    return guildAvatar ? { guildId: resolvedGuildId, guildAvatar } : null;
+  }
+
+  async function applyDiscordGuildMemberAvatar(user, accessToken, guildId) {
+    const guildMember = await fetchDiscordCurrentGuildMember(accessToken, guildId);
+    if (!guildMember) return user;
+    return {
+      ...user,
+      guildId: guildMember.guildId,
+      guildAvatar: guildMember.guildAvatar,
+    };
+  }
+
   function analyticsConsent(request) {
     const consent = parseCookies(request.headers.cookie)[ANALYTICS_CONSENT_COOKIE];
     if (consent === "granted" || consent === "denied") return consent;
@@ -755,6 +790,38 @@ function createGameServer({
 
   function roomAnalyticsSession(room) {
     return `room:${room.code}:round:${room.round}`;
+  }
+
+  function roomLifetimeMs(room, now = Date.now()) {
+    return Math.max(0, now - (room.createdAt || now));
+  }
+
+  function roomLobbyDurationMs(room, now = Date.now()) {
+    if (room.firstRaceStartedAt) return Math.max(0, room.firstRaceStartedAt - (room.createdAt || room.firstRaceStartedAt));
+    return Math.max(0, now - (room.createdAt || now));
+  }
+
+  function roomAnalyticsProperties(room, now = Date.now()) {
+    return {
+      players: room.players.size,
+      maxPlayers: Math.max(room.maxPlayersSeen || 0, room.players.size),
+      mazeScale: room.mazeScale,
+      powerUpCount: room.powerUpCount,
+      round: room.round,
+      roundsStarted: room.roundsStarted || 0,
+      completedRounds: room.completedRounds || 0,
+      finishers: room.finishCount || 0,
+      roomAgeMs: roomLifetimeMs(room, now),
+      lobbyDurationMs: roomLobbyDurationMs(room, now),
+    };
+  }
+
+  function recordRoomClosed(room, reason = "last_player_left", now = Date.now()) {
+    recordAnalytics("room_closed", {
+      ...roomAnalyticsProperties(room, now),
+      phase: room.phase,
+      reason,
+    }, roomAnalyticsSession(room));
   }
 
   function serveStaticFile(root, relativePath, response, notFoundMessage) {
@@ -856,11 +923,7 @@ function createGameServer({
 
   async function handleHttpRequest(request, response) {
     const requestUrl = new URL(request.url, "http://localhost");
-    if (requestUrl.pathname === "/.proxy") {
-      requestUrl.pathname = "/";
-    } else if (requestUrl.pathname.startsWith("/.proxy/")) {
-      requestUrl.pathname = requestUrl.pathname.slice("/.proxy".length);
-    }
+    requestUrl.pathname = normalizeActivityProxyPathname(requestUrl.pathname);
 
     if (requestUrl.pathname === "/api/analytics/consent" && request.method === "GET") {
       sendJson(response, 200, {
@@ -930,6 +993,10 @@ function createGameServer({
           id: user.id,
           username: user.username,
           displayName: user.displayName,
+          avatar: discordAvatarHash(user.avatar),
+          guildId: discordSnowflake(user.guildId),
+          guildAvatar: discordAvatarHash(user.guildAvatar),
+          defaultAvatar: discordDefaultAvatarIndex(user),
           avatarUrl: discordAvatarUrl(user),
         },
       } : { authenticated: false, enabled: auth.enabled, clientId: auth.clientId });
@@ -960,18 +1027,24 @@ function createGameServer({
       try {
         const payload = await readJsonBody(request);
         const code = typeof payload.code === "string" ? payload.code.trim() : "";
+        const guildId = discordSnowflake(payload.guild_id ?? payload.guildId);
         const { token, user } = await fetchDiscordIdentityFromCode(code, false);
-        const session = createAuthSession(user, auth.sessionSecret);
+        const displayUser = await applyDiscordGuildMemberAvatar(user, token.access_token, guildId);
+        const session = createAuthSession(displayUser, auth.sessionSecret);
         recordAnalytics("discord_login_success", { provider: "discord_activity" });
         sendJson(response, 200, {
           authenticated: true,
           access_token: token.access_token,
           session,
           user: {
-            id: String(user.id),
-            username: String(user.username || "Joueur Discord"),
-            displayName: String(user.global_name || user.displayName || user.username || "Joueur Discord"),
-            avatarUrl: discordAvatarUrl(user),
+            id: String(displayUser.id),
+            username: String(displayUser.username || "Joueur Discord"),
+            displayName: String(displayUser.global_name || displayUser.displayName || displayUser.username || "Joueur Discord"),
+            avatar: discordAvatarHash(displayUser.avatar),
+            guildId: discordSnowflake(displayUser.guildId),
+            guildAvatar: discordAvatarHash(displayUser.guildAvatar),
+            defaultAvatar: discordDefaultAvatarIndex(displayUser),
+            avatarUrl: discordAvatarUrl(displayUser),
           },
         }, {
           "Set-Cookie": authSessionCookieHeader(request, session, secureCookie(request) ? "None" : "Lax"),
@@ -1085,7 +1158,21 @@ function createGameServer({
   });
 
   const sockets = new Map();
-  const webSocketServer = new WebSocketServer({ server: httpServer, path: "/ws" });
+  const webSocketServer = new WebSocketServer({ noServer: true });
+
+  httpServer.on("upgrade", (request, socket, head) => {
+    const requestUrl = new URL(request.url, sameOriginBaseUrl(request));
+    requestUrl.pathname = normalizeActivityProxyPathname(requestUrl.pathname);
+    if (requestUrl.pathname !== "/ws") {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    request.url = `${requestUrl.pathname}${requestUrl.search}`;
+    webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+      webSocketServer.emit("connection", webSocket, request);
+    });
+  });
 
   function send(socket, payload) {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
@@ -1102,6 +1189,7 @@ function createGameServer({
     if (!room) return;
     room.players.delete(socket.id);
     if (!room.players.size) {
+      recordRoomClosed(room);
       rooms.delete(room.code);
       return;
     }
@@ -1137,6 +1225,7 @@ function createGameServer({
       shield: false,
     };
     room.players.set(socket.id, player);
+    room.maxPlayersSeen = Math.max(room.maxPlayersSeen || 0, room.players.size);
     socket.roomCode = room.code;
     return player;
   }
@@ -1154,31 +1243,36 @@ function createGameServer({
       leaveRoom(socket);
       const code = createRoomCode(rooms);
       const maze = generateScaledMaze(DEFAULT_MAZE_SCALE);
+      const now = Date.now();
       const room = {
         code,
         hostId: socket.id,
+        createdAt: now,
         maze,
         players: new Map(),
+        maxPlayersSeen: 0,
         winner: "",
         complete: false,
         finishCount: 0,
         phase: "waiting",
         startAt: 0,
         round: 1,
+        roundsStarted: 0,
+        completedRounds: 0,
+        firstRaceStartedAt: 0,
+        lastRaceStartedAt: 0,
         mazeScale: DEFAULT_MAZE_SCALE,
         powerUpCount: DEFAULT_POWER_UP_COUNT,
         powerUps: createConfiguredPowerUps(maze, DEFAULT_POWER_UP_COUNT),
         lastEvent: null,
         standings: new Map(),
         history: [],
+        chat: [],
         podium: [],
       };
       rooms.set(code, room);
       addPlayer(room, socket, message.name, discordActivityUserFromMessage(message));
-      recordAnalytics("room_created", {
-        players: room.players.size,
-        mazeScale: room.mazeScale,
-      }, roomAnalyticsSession(room));
+      recordAnalytics("room_created", roomAnalyticsProperties(room, now), roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
       return;
     }
@@ -1187,23 +1281,29 @@ function createGameServer({
       const code = String(message.room || "").trim().toUpperCase();
       const room = rooms.get(code);
       if (!room) {
+        recordAnalytics("room_join_failed", { reason: "not_found" });
         send(socket, { type: "error", message: "Ce salon n’existe pas ou a expiré." });
         return;
       }
       if (room.players.size >= MAX_PLAYERS) {
+        recordAnalytics("room_join_failed", {
+          ...roomAnalyticsProperties(room),
+          reason: "full",
+        }, roomAnalyticsSession(room));
         send(socket, { type: "error", message: "Ce salon est complet." });
         return;
       }
       if (room.phase !== "waiting") {
+        recordAnalytics("room_join_failed", {
+          ...roomAnalyticsProperties(room),
+          reason: "already_started",
+        }, roomAnalyticsSession(room));
         send(socket, { type: "error", message: "Cette course a déjà démarré." });
         return;
       }
       leaveRoom(socket);
       addPlayer(room, socket, message.name, discordActivityUserFromMessage(message));
-      recordAnalytics("room_joined", {
-        players: room.players.size,
-        mazeScale: room.mazeScale,
-      }, roomAnalyticsSession(room));
+      recordAnalytics("room_joined", roomAnalyticsProperties(room), roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
       return;
     }
@@ -1220,11 +1320,12 @@ function createGameServer({
       if (applyMove(room, player, String(message.direction || ""))) {
         if (!wasComplete && room.complete) {
           const slowestTimeMs = Math.max(...[...room.players.values()].map((entry) => entry.timeMs || 0));
+          const completedAtMs = Math.max(...[...room.players.values()].map((entry) => entry.finishedAt || 0));
+          room.completedRounds = (room.completedRounds || 0) + 1;
           recordAnalytics("race_completed", {
-            players: room.players.size,
-            mazeScale: room.mazeScale,
+            ...roomAnalyticsProperties(room, completedAtMs),
             durationMs: slowestTimeMs,
-            round: room.round,
+            completedAtMs,
           }, roomAnalyticsSession(room));
         }
         broadcast(room, stateMessage(room));
@@ -1248,10 +1349,7 @@ function createGameServer({
       };
       room.chat.push(chatMessage);
       room.chat = room.chat.slice(-CHAT_HISTORY_LIMIT);
-      recordAnalytics("chat_sent", {
-        players: room.players.size,
-        mazeScale: room.mazeScale,
-      }, roomAnalyticsSession(room));
+      recordAnalytics("chat_sent", roomAnalyticsProperties(room, now), roomAnalyticsSession(room));
       broadcast(room, chatMessage);
       return;
     }
@@ -1262,13 +1360,16 @@ function createGameServer({
         return;
       }
       if (room.phase !== "waiting") return;
+      const now = Date.now();
       room.phase = "countdown";
-      room.startAt = Date.now() + COUNTDOWN_MS;
+      room.startAt = now + COUNTDOWN_MS;
       room.lastEvent = null;
+      room.roundsStarted = (room.roundsStarted || 0) + 1;
+      if (!room.firstRaceStartedAt) room.firstRaceStartedAt = now;
+      room.lastRaceStartedAt = now;
       recordAnalytics("race_started", {
-        players: room.players.size,
-        mazeScale: room.mazeScale,
-        round: room.round,
+        ...roomAnalyticsProperties(room, now),
+        startAtMs: room.startAt,
       }, roomAnalyticsSession(room));
       broadcast(room, stateMessage(room));
       return;
@@ -1280,10 +1381,7 @@ function createGameServer({
       if (nextScale === room.mazeScale) return;
       room.mazeScale = nextScale;
       prepareRoomMaze(room, generateScaledMaze(nextScale));
-      recordAnalytics("maze_resized", {
-        players: room.players.size,
-        mazeScale: room.mazeScale,
-      }, roomAnalyticsSession(room));
+      recordAnalytics("maze_resized", roomAnalyticsProperties(room), roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
       return;
     }
@@ -1295,11 +1393,7 @@ function createGameServer({
       room.powerUpCount = nextCount;
       room.powerUps = createConfiguredPowerUps(room.maze, room.powerUpCount);
       room.lastEvent = null;
-      recordAnalytics("power_up_count_changed", {
-        players: room.players.size,
-        mazeScale: room.mazeScale,
-        powerUpCount: room.powerUpCount,
-      }, roomAnalyticsSession(room));
+      recordAnalytics("power_up_count_changed", roomAnalyticsProperties(room), roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
       return;
     }
@@ -1309,11 +1403,13 @@ function createGameServer({
         send(socket, { type: "error", message: "Seul le créateur du salon peut relancer." });
         return;
       }
+      const previousRounds = room.round;
+      const completedRounds = room.completedRounds || 0;
       resetRoom(room);
       recordAnalytics("race_restarted", {
-        players: room.players.size,
-        mazeScale: room.mazeScale,
-        round: room.round,
+        ...roomAnalyticsProperties(room),
+        previousRounds,
+        completedRounds,
       }, roomAnalyticsSession(room));
       broadcast(room, roomMessage(room));
     }
