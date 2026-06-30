@@ -103,6 +103,8 @@ var discord_status_label: Label
 var create_button: Button
 var join_button: Button
 var copy_button: Button
+var host_controls_panel: PanelContainer
+var host_controls_content: VBoxContainer
 var start_race_button: Button
 var waiting_label: Label
 var maze_size_controls: VBoxContainer
@@ -195,28 +197,46 @@ func _build_interface() -> void:
 	panel.add_theme_stylebox_override("panel", lobby_style)
 	root.add_child(panel)
 	_layout_lobby_panel()
+
+	host_controls_panel = PanelContainer.new()
+	host_controls_panel.visible = false
+	host_controls_panel.z_index = 12
+	host_controls_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	var host_panel_style := StyleBoxFlat.new()
+	host_panel_style.bg_color = Color(0.035, 0.075, 0.12, 0.9)
+	host_panel_style.border_color = Color(0.54, 0.86, 1.0, 0.34)
+	host_panel_style.set_border_width_all(1)
+	host_panel_style.set_corner_radius_all(12)
+	host_panel_style.shadow_color = Color(0.0, 0.0, 0.0, 0.38)
+	host_panel_style.shadow_size = 16
+	host_controls_panel.add_theme_stylebox_override("panel", host_panel_style)
+	root.add_child(host_controls_panel)
+
+	var host_margin := MarginContainer.new()
+	host_margin.add_theme_constant_override("margin_left", 12)
+	host_margin.add_theme_constant_override("margin_top", 10)
+	host_margin.add_theme_constant_override("margin_right", 12)
+	host_margin.add_theme_constant_override("margin_bottom", 10)
+	host_controls_panel.add_child(host_margin)
+
+	host_controls_content = VBoxContainer.new()
+	host_controls_content.add_theme_constant_override("separation", 7)
+	host_margin.add_child(host_controls_content)
+
 	copy_button = Button.new()
 	copy_button.text = "Copier le code"
 	copy_button.visible = false
-	copy_button.custom_minimum_size = Vector2(220, 44)
+	copy_button.custom_minimum_size = Vector2(248, 40)
 	copy_button.pressed.connect(_on_copy_pressed)
-	root.add_child(copy_button)
-	copy_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	copy_button.offset_left = -236
-	copy_button.offset_top = 16
-	copy_button.offset_right = -16
-	copy_button.offset_bottom = 60
+	_apply_button_style(copy_button, Color("101a28"), Color("17283b"), Color("dcecff"))
+	host_controls_content.add_child(copy_button)
+
 	start_race_button = Button.new()
 	start_race_button.text = "Lancer le départ"
 	start_race_button.visible = false
-	start_race_button.custom_minimum_size = Vector2(220, 42)
+	start_race_button.custom_minimum_size = Vector2(248, 44)
 	start_race_button.pressed.connect(_on_start_race_pressed)
-	root.add_child(start_race_button)
-	start_race_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	start_race_button.offset_left = -236
-	start_race_button.offset_top = 68
-	start_race_button.offset_right = -16
-	start_race_button.offset_bottom = 110
+	host_controls_content.add_child(start_race_button)
 	_apply_button_style(
 		start_race_button,
 		Color("1d6b48"),
@@ -228,20 +248,20 @@ func _build_interface() -> void:
 	waiting_label.visible = false
 	waiting_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	waiting_label.add_theme_color_override("font_color", Color("9fb3c8"))
-	waiting_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	waiting_label.offset_left = -286
-	waiting_label.offset_top = 72
-	waiting_label.offset_right = -16
-	waiting_label.offset_bottom = 108
-	root.add_child(waiting_label)
+	waiting_label.custom_minimum_size = Vector2(248, 34)
+	host_controls_content.add_child(waiting_label)
+
 	maze_size_controls = VBoxContainer.new()
 	maze_size_controls.visible = false
-	maze_size_controls.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	maze_size_controls.offset_left = -236
-	maze_size_controls.offset_top = 118
-	maze_size_controls.offset_right = -16
-	maze_size_controls.offset_bottom = 258
-	root.add_child(maze_size_controls)
+	maze_size_controls.add_theme_constant_override("separation", 5)
+	host_controls_content.add_child(maze_size_controls)
+
+	var settings_title := Label.new()
+	settings_title.text = "Paramètres de course"
+	settings_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	settings_title.add_theme_font_size_override("font_size", 14)
+	settings_title.add_theme_color_override("font_color", Color("84e6ff"))
+	maze_size_controls.add_child(settings_title)
 
 	maze_size_label = Label.new()
 	maze_size_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -255,6 +275,7 @@ func _build_interface() -> void:
 	maze_size_slider.value = maze_scale
 	maze_size_slider.tick_count = 10
 	maze_size_slider.ticks_on_borders = true
+	maze_size_slider.custom_minimum_size = Vector2(248, 24)
 	maze_size_slider.value_changed.connect(_on_maze_size_changed)
 	maze_size_controls.add_child(maze_size_slider)
 
@@ -270,10 +291,12 @@ func _build_interface() -> void:
 	power_up_count_slider.value = DEFAULT_POWER_UP_COUNT
 	power_up_count_slider.tick_count = 7
 	power_up_count_slider.ticks_on_borders = true
+	power_up_count_slider.custom_minimum_size = Vector2(248, 24)
 	power_up_count_slider.value_changed.connect(_on_power_up_count_changed)
 	maze_size_controls.add_child(power_up_count_slider)
 	_update_maze_size_label()
 	_update_power_up_count_label()
+	_layout_host_controls()
 
 	race_hud.build(root)
 	race_hud.tone_requested.connect(_on_race_hud_tone_requested)
@@ -456,6 +479,50 @@ func _layout_lobby_panel() -> void:
 	panel.offset_right = panel_width * 0.5
 	panel.offset_top = -panel_height * 0.5
 	panel.offset_bottom = panel_height * 0.5
+
+
+func _layout_host_controls() -> void:
+	if not is_instance_valid(host_controls_panel):
+		return
+	var viewport_size := get_viewport_rect().size
+	var landscape := viewport_size.x >= viewport_size.y
+	var compact := landscape and viewport_size.y < 520.0
+	var right_margin := 12.0 if compact else 16.0
+	var top_margin := 8.0 if compact else 14.0
+	var panel_width := clampf(
+		viewport_size.x * (0.32 if compact else 0.2),
+		248.0,
+		312.0
+	)
+	var is_host_waiting := (
+		not room_code.is_empty()
+		and race_phase == "waiting"
+		and host_id == player_id
+	)
+	var panel_height := 108.0
+	if is_host_waiting:
+		panel_height = 236.0 if compact else 248.0
+
+	host_controls_panel.offset_left = -panel_width - right_margin
+	host_controls_panel.offset_top = top_margin
+	host_controls_panel.offset_right = -right_margin
+	host_controls_panel.offset_bottom = top_margin + panel_height
+
+	var control_width := maxf(196.0, panel_width - 24.0)
+	if is_instance_valid(host_controls_content):
+		host_controls_content.add_theme_constant_override("separation", 5 if compact else 7)
+	if is_instance_valid(maze_size_controls):
+		maze_size_controls.add_theme_constant_override("separation", 4 if compact else 5)
+	if is_instance_valid(copy_button):
+		copy_button.custom_minimum_size = Vector2(control_width, 38.0 if compact else 40.0)
+	if is_instance_valid(start_race_button):
+		start_race_button.custom_minimum_size = Vector2(control_width, 42.0 if compact else 44.0)
+	if is_instance_valid(waiting_label):
+		waiting_label.custom_minimum_size = Vector2(control_width, 34.0)
+	if is_instance_valid(maze_size_slider):
+		maze_size_slider.custom_minimum_size = Vector2(control_width, 22.0 if compact else 24.0)
+	if is_instance_valid(power_up_count_slider):
+		power_up_count_slider.custom_minimum_size = Vector2(control_width, 22.0 if compact else 24.0)
 
 
 func _build_menu_debug_panel(root: Control) -> void:
@@ -898,12 +965,15 @@ func _apply_race_metadata(message: Dictionary) -> void:
 
 func _refresh_room_controls() -> void:
 	var is_in_room := not room_code.is_empty()
+	var is_waiting_room := is_in_room and race_phase == "waiting"
+	var is_host_waiting := is_waiting_room and host_id == player_id
 	panel.visible = not is_in_room
-	copy_button.visible = is_in_room
-	var is_host_waiting := is_in_room and race_phase == "waiting" and host_id == player_id
+	host_controls_panel.visible = is_waiting_room
+	copy_button.visible = is_waiting_room
 	start_race_button.visible = is_host_waiting
 	maze_size_controls.visible = is_host_waiting
-	waiting_label.visible = is_in_room and race_phase == "waiting" and host_id != player_id
+	waiting_label.visible = is_waiting_room and host_id != player_id
+	_layout_host_controls()
 	_update_menu_debug_visibility()
 	_refresh_touch_controls()
 	_sync_gamepad_focus_lock()
@@ -928,7 +998,7 @@ func _refresh_touch_controls() -> void:
 		and not _local_player_finished()
 	)
 	touch_controls.visible = show_controls
-	wall_shake_toggle.visible = not (touchscreen_available and not room_code.is_empty())
+	wall_shake_toggle.visible = room_code.is_empty()
 	if is_instance_valid(help_label):
 		help_label.visible = room_code.is_empty()
 	if not show_controls:
@@ -1423,6 +1493,7 @@ func _on_score_restart_pressed() -> void:
 
 func _on_viewport_resized() -> void:
 	_layout_lobby_panel()
+	_layout_host_controls()
 	_layout_menu_debug_panel()
 	_layout_touch_controls()
 	if is_instance_valid(race_hud):

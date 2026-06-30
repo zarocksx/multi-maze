@@ -283,20 +283,21 @@ func _add_score_avatar(parent: Container, player: Dictionary, color: Color) -> v
 	avatar_slot.tooltip_text = "Avatar de %s" % str(player.get("name", "Joueur"))
 	parent.add_child(avatar_slot)
 
+	var frame := Panel.new()
+	frame.position = Vector2.ZERO
+	frame.size = Vector2(avatar_size, avatar_size)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var frame_style := StyleBoxFlat.new()
+	frame_style.bg_color = color.darkened(0.52)
+	frame_style.border_color = color
+	frame_style.set_border_width_all(2)
+	frame_style.set_corner_radius_all(int(avatar_size * 0.5))
+	frame.add_theme_stylebox_override("panel", frame_style)
+	avatar_slot.add_child(frame)
+
 	var avatar_url := str(player.get("avatarUrl", ""))
 	var avatar_texture = avatar_loader.get_texture(avatar_url) if avatar_loader else null
 	if avatar_texture is Texture2D:
-		var border := Label.new()
-		border.text = "●"
-		border.position = Vector2.ZERO
-		border.size = Vector2(avatar_size, avatar_size)
-		border.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		border.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		border.add_theme_font_size_override("font_size", int(avatar_size))
-		border.add_theme_color_override("font_color", color)
-		border.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		avatar_slot.add_child(border)
-
 		var portrait := TextureRect.new()
 		portrait.texture = avatar_texture
 		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -308,16 +309,29 @@ func _add_score_avatar(parent: Container, player: Dictionary, color: Color) -> v
 		return
 
 	var fallback := Label.new()
-	fallback.text = "●"
+	fallback.text = _player_initial(player)
 	fallback.position = Vector2.ZERO
 	fallback.size = Vector2(avatar_size, avatar_size)
 	fallback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	fallback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	fallback.add_theme_font_size_override("font_size", int(avatar_size * 0.76))
-	fallback.add_theme_color_override("font_color", color)
+	fallback.add_theme_font_size_override("font_size", int(avatar_size * 0.42))
+	fallback.add_theme_color_override("font_color", _readable_text_color(color))
 	fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	avatar_slot.add_child(fallback)
 
+
+func _player_initial(player: Dictionary) -> String:
+	var player_name := str(player.get("name", "Joueur")).strip_edges().to_upper()
+	for index in range(player_name.length()):
+		var code := player_name.unicode_at(index)
+		if (code >= 48 and code <= 57) or (code >= 65 and code <= 90):
+			return player_name.substr(index, 1)
+	return "?"
+
+
+func _readable_text_color(background: Color) -> Color:
+	var luminance := background.r * 0.299 + background.g * 0.587 + background.b * 0.114
+	return Color("07101b") if luminance > 0.58 else Color.WHITE
 
 func _apply_restart_button_style(button: Button) -> void:
 	var colors := {
